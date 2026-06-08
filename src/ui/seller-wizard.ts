@@ -10,7 +10,9 @@ import { swapStatus } from "../app/roles.js";
 import { connectIrisWallet, waitForIrisWallet } from "../nock/wallet.js";
 import { connectEvmWallet } from "../evm/wallet.js";
 import { isPlausibleWalletAddress } from "../nock/balance.js";
+import { fetchCurrentBlockHeight } from "../nock/balance.js";
 import { el, field, runBusy } from "./dom.js";
+import { addressField } from "./address-field.js";
 import { mountWizard, type WizardStep } from "./wizard.js";
 import { log, logErr, setWalletStatus } from "./log.js";
 import { swapShare } from "./swap-card.js";
@@ -85,22 +87,29 @@ export function buildSellerWizard(container: HTMLElement, session: SwapSession):
   };
 
   // --- Step 2: generate swap ------------------------------------------------
-  let nockAddrInput: HTMLInputElement;
+  let nockAddrField: ReturnType<typeof addressField>;
+  let buyerNockField: ReturnType<typeof addressField>;
   let giftInput: HTMLInputElement;
-  let buyerNockInput: HTMLInputElement;
   let usdcInput: HTMLInputElement;
   let refundInput: HTMLInputElement;
+
   const generateStep: WizardStep = {
     id: "generate",
     title: "Generate swap",
     nextLabel: "Generate swap",
     render() {
       const body = el("div");
-      const addr = field("Seller Nockchain Address", { pattern: "^[1-9A-HJ-NP-Za-km-z]{43,44}$" });
-      nockAddrInput = addr.input;
-      const sa = session.nock?.address;
-      if (sa && isPlausibleWalletAddress(sa)) nockAddrInput.value = sa;
-      else if (session.activeSwap) nockAddrInput.value = session.activeSwap.sellerPkh;
+
+      nockAddrField = addressField({
+        label: "Seller Nockchain Address",
+        kind: "nock",
+        initialValue: (() => {
+          const sa = session.nock?.address;
+          if (sa && isPlausibleWalletAddress(sa)) return sa;
+          if (session.activeSwap) return session.activeSwap.sellerPkh;
+          return "";
+        })(),
+      });
 
       const gift = field("NOCK Amount (nicks)", { type: "number", step: "1", min: "655360" });
       giftInput = gift.input;
@@ -110,25 +119,40 @@ export function buildSellerWizard(container: HTMLElement, session: SwapSession):
       usdcInput = usdc.input;
       if (session.activeSwap?.usdcAmount) usdcInput.value = session.activeSwap.usdcAmount;
 
-      const buyer = field("Buyer Nockchain Address (only this wallet can claim)", { pattern: "^[1-9A-HJ-NP-Za-km-z]{43,44}$" });
-      buyerNockInput = buyer.input;
-      if (session.activeSwap) buyerNockInput.value = session.activeSwap.buyerPkh;
+      buyerNockField = addressField({
+        label: "Buyer Nockchain Address (only this wallet can claim)",
+        kind: "nock",
+        initialValue: session.activeSwap?.buyerPkh ?? "",
+      });
 
       const refund = field("Refund Block Height", { type: "number", step: "1", min: "1" });
       refundInput = refund.input;
-      if (session.activeSwap) refundInput.value = session.activeSwap.nockRefundHeight.toString();
+      if (session.activeSwap) {
+        refundInput.value = session.activeSwap.nockRefundHeight.toString();
+      } else {
+        // Attempt to auto-populate with current block + 500.
+        if (session.nock) {
+          fetchCurrentBlockHeight(session.nock)
+            .then((h) => {
+              if (h != null && !refundInput.value) {
+                refundInput.value = (h + 500n).toString();
+              }
+            })
+            .catch(() => { /* leave blank */ });
+        }
+      }
 
       body.append(
         el("p", { class: "hint", text: "Your Base address is recorded automatically so the buyer never types it." }),
-        addr.row, gift.row, usdc.row, buyer.row, refund.row
+        nockAddrField.row, gift.row, usdc.row, buyerNockField.row, refund.row
       );
       return body;
     },
     async onNext() {
       const { swap, preimageJam, refundHeight } = await generateSwapAction({
         wallet: session.nock,
-        buyerPkh: buyerNockInput.value,
-        walletAddress: nockAddrInput.value,
+        buyerPkh: buyerNockField.getValue(),
+        walletAddress: nockAddrField.getValue(),
         sellerEth: session.evm ?? "",
         usdcAmount: usdcInput.value,
         gift: giftInput.value,
@@ -149,18 +173,20 @@ export function buildSellerWizard(container: HTMLElement, session: SwapSession):
   };
 
   // --- Step 3: lock NOCK ----------------------------------------------------
-  let lockAddrInput: HTMLInputElement;
+  let lockAddrField: ReturnType<typeof addressField>;
   const lockStep: WizardStep = {
     id: "lock-nock",
     title: "Lock NOCK on Nockchain",
     nextLabel: "Lock NOCK",
     render() {
       const body = el("div");
-      const addr = field("Seller nockblocks wallet address (base58)", { pattern: "^[1-9A-HJ-NP-Za-km-z]{43,44}$" });
-      lockAddrInput = addr.input;
-      lockAddrInput.value = session.activeSwap?.sellerPkh ?? nockAddrInput?.value ?? "";
+      lockAddrField = addressField({
+        label: "Seller nockblocks wallet address (base58)",
+        kind: "nock",
+        initialValue: session.activeSwap?.sellerPkh ?? "",
+      });
       body.append(
-        addr.row,
+        lockAddrField.row,
         el("p", { class: "hint", text: "After locking, the swap carries lockFirstName so the buyer can claim." }),
         el("p", { class: "fee-disclaimer", text: "Fee: a 0.5% protocol fee is deducted from your USDC when you withdraw. You receive 99.5% of the locked USDC." })
       );
@@ -174,7 +200,7 @@ export function buildSellerWizard(container: HTMLElement, session: SwapSession):
       const { swap, result } = await lockNockAction({
         wallet: session.nock,
         swap: session.activeSwap,
-        walletAddress: lockAddrInput.value,
+        walletAddress: lockAddrField.getValue(),
       });
       session.activeSwap = swap;
       await repo.put(swap);

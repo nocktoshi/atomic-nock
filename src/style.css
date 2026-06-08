@@ -210,11 +210,14 @@ main {
 }
 
 .card-dismiss {
-  position: relative;
-  top: -1.7rem;
-  left: .6rem;
-  width: 1rem;
-  height: 1rem;
+  position: absolute;
+  top: 0.5rem;
+  right: 0.6rem;
+  width: 1.5rem;
+  height: 1.5rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
   font-size: 1.3rem;
   font-weight: bold;
   border: none;
@@ -222,11 +225,14 @@ main {
   color: rgba(59, 5, 118, 0.75);
   cursor: pointer;
   border-radius: 4px;
+  margin-top: 0;
+  padding: 0;
+  line-height: 1;
 }
 
 .card-dismiss:hover {
-  background:transparent;
-  color:#00ff95;
+  background: transparent;
+  color: #00ff95;
 }
 
 /* Fee disclaimer on lock steps */
@@ -276,8 +282,61 @@ main {
 }
 
 .card-actions .refund-btn {
-  background: var(--warn);
-  color: #3a0a0a;
+  background: transparent;
+  color: var(--text);
+  border: 1px solid var(--border);
+}
+
+.card-actions .refund-btn:hover {
+  background: var(--card);
+  color: var(--text);
+}
+
+/* --- Address field with name resolution --- */
+.addr-field-wrap {
+  display: flex;
+  gap: 0.4rem;
+  align-items: stretch;
+}
+
+.addr-field-wrap input {
+  flex: 1;
+  min-width: 0;
+}
+
+.addr-resolve-btn {
+  margin-top: 0;
+  white-space: nowrap;
+  flex-shrink: 0;
+  font-size: 0.8rem;
+  padding: 0.4rem 0.7rem;
+}
+
+.addr-resolve-hint {
+  display: block;
+  font-size: 0.75rem;
+  font-family: "IBM Plex Mono", monospace;
+  color: var(--muted);
+  margin: 0.2rem 0 0.4rem;
+  word-break: break-all;
+}
+
+.addr-resolve-hint.ok {
+  color: #8b21c0;
+  font-weight: bold;
+}
+
+.addr-resolve-hint.error {
+  color: #f07178;
+  font-weight: bold;
+}
+
+/* Badge row inside swap overview title */
+.swap-card-title-badges {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  flex-wrap: wrap;
 }
 
 /* --- Swap summary card (click to copy) --- */

@@ -42,6 +42,7 @@ export function swapOverviewCard(opts: OverviewCardOpts): HTMLElement {
 
   const card = el("div", { class: "swap-card overview" });
 
+  // Dismiss button absolutely positioned in the upper-right corner of the card.
   const dismiss = el("button", {
     type: "button",
     class: "card-dismiss",
@@ -55,8 +56,10 @@ export function swapOverviewCard(opts: OverviewCardOpts): HTMLElement {
 
   const title = el("div", { class: "swap-card-title" }, [
     el("span", { text: role === "seller" ? "Selling NOCK" : "Buying NOCK" }),
-    el("span", { class: "swap-badge", text: STAGE_LABEL[status] }),
-    dismiss
+    el("div", { class: "swap-card-title-badges" }, [
+      el("span", { class: "swap-badge", text: STAGE_LABEL[status] }),
+      ...(refundable ? [el("span", { class: "refund-badge", text: "Refund available" })] : []),
+    ]),
   ]);
 
   const rows = el("div");
@@ -82,7 +85,6 @@ export function swapOverviewCard(opts: OverviewCardOpts): HTMLElement {
 
   if (refundable) {
     card.classList.add("refundable");
-    title.append(el("span", { class: "refund-badge", text: "Refund available" }));
     const refundBtn = el("button", {
       type: "button",
       class: "refund-btn",
@@ -95,6 +97,6 @@ export function swapOverviewCard(opts: OverviewCardOpts): HTMLElement {
     actions.append(refundBtn);
   }
 
-  card.append(title, rows, actions);
+  card.append(dismiss, title, rows, actions);
   return card;
 }

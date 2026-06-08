@@ -137,6 +137,27 @@ export async function firstNameFromWalletKey(walletKey: string): Promise<Digest>
   return Iris.spendConditionFirstName(spendCondition) as Digest;
 }
 
+/**
+ * Fetch the current block height from the gRPC node by querying the wallet's
+ * own first name.  Returns undefined if the wallet address is unavailable or
+ * the RPC does not return a height (node still syncing, etc.).
+ */
+export async function fetchCurrentBlockHeight(
+  session: NockWalletSession
+): Promise<bigint | undefined> {
+  const key = session.address ?? session.pkh;
+  if (!key) return undefined;
+  try {
+    const firstName = await firstNameFromWalletKey(key);
+    const balance = await session.grpc.getBalanceByFirstName(firstName);
+    const h = balance?.height?.value;
+    if (h == null) return undefined;
+    return BigInt(h);
+  } catch {
+    return undefined;
+  }
+}
+
 /** Balance at a note first name (e.g. HTLC output `lockFirstName` from swap JSON). */
 export async function fetchNotesByFirstName(
   session: NockWalletSession,

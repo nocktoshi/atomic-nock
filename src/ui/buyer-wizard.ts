@@ -10,6 +10,7 @@ import { swapStatus } from "../app/roles.js";
 import { connectIrisWallet, waitForIrisWallet } from "../nock/wallet.js";
 import { connectEvmWallet } from "../evm/wallet.js";
 import { el, field, runBusy } from "./dom.js";
+import { addressField } from "./address-field.js";
 import { mountWizard, type WizardStep } from "./wizard.js";
 import { log, logErr, setWalletStatus } from "./log.js";
 import { swapCard } from "./swap-card.js";
@@ -98,8 +99,12 @@ export function buildBuyerWizard(container: HTMLElement, session: SwapSession): 
     render() {
       const body = el("div");
       const s = session.activeSwap;
-      const seller = field("Seller Ethereum address (from swap)", { readonly: true });
-      seller.input.value = s?.sellerEth ?? "";
+      const seller = addressField({
+        label: "Seller Ethereum address (from swap)",
+        kind: "eth",
+        initialValue: s?.sellerEth ?? "",
+        readonly: true,
+      });
       const usdc = field("USDC amount (from swap)", { readonly: true });
       usdc.input.value = s?.usdcAmount ?? "";
       body.append(
