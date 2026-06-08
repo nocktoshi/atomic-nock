@@ -1,0 +1,478 @@
+:root {
+  --bg: #91bd13;;
+  --card: #c5511e9e;
+  --border: #4216cd;
+  --text: #520fa0;
+  --muted: #b8c80e;
+  --accent: #c08221;
+  --accent-dim: #40831a;
+  --warn: #c9a227;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  font-family: "IBM Plex Sans", system-ui, sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  line-height: 1.5;
+}
+
+header {
+  padding: 1.5rem 2rem;
+  border-bottom: 1px solid var(--border);
+  text-align: center;
+}
+
+header.logo {
+  background-image: url("/atomicnock-logo.png");
+  background-repeat: no-repeat;
+  background-position: center;
+  background-size: contain;
+  min-height: 180px;
+  border-bottom: none;
+}
+
+h1 {
+  margin: 0;
+  font-size: 1.5rem;
+  font-weight: 600;
+}
+
+.subtitle {
+  margin: 0.25rem 0 0;
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
+.global-config {
+  margin-top: 1rem;
+  max-width: 36rem;
+}
+
+.global-config code {
+  font-size: 0.85em;
+}
+
+.preimage-status {
+  font-size: 0.8rem;
+  color: var(--muted);
+  margin: 0.35rem 0 0.5rem;
+}
+
+.preimage-status.ok {
+  color: #8b21c0;
+  font-weight: bold;
+}
+
+.wallet-row {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+  margin-bottom: 0.5rem;
+}
+
+.wallet-row button {
+  margin-top: 0;
+}
+
+.wallet-status {
+  font-size: 0.8rem;
+  color: var(--muted);
+  font-family: "IBM Plex Mono", monospace;
+}
+
+.wallet-status.ok {
+  color: #551971;
+  font-weight: bold;
+}
+
+.wallet-status.error {
+  color: #f07178;
+  font-weight: bold;
+}
+
+main {
+  display: block;
+  background-image: url("/bg.png");
+  background-position: top center;
+  max-width: 720px;
+  padding: 190px 3rem 3rem 3rem;
+  margin: auto;
+  border-radius: 2rem;
+}
+
+@media (max-width: 800px) {
+  main {
+    padding: 140px 1rem 2rem 1rem;
+  }
+}
+
+/* --- Wizard / role-select (single-column flow) --- */
+/* Titles sit on the dark grunge background — give them a light, high-contrast
+   treatment with a shadow so they don't blend in. */
+.flow-title,
+.role-select h2 {
+  color: var(--accent);
+  text-shadow: 0 2px 6px rgba(0, 0, 0, 0.85), 0 0 2px rgba(0, 0, 0, 0.9);
+  font-size: 1.6rem;
+  margin: 0.25rem 0 1rem;
+}
+
+.role-flow {
+  position: relative;
+}
+
+.role-back {
+  background: transparent;
+  color: var(--accent);
+  padding: 0.25rem 0;
+  font-weight: bold;
+  text-shadow: 0 2px 6px rgba(0, 0, 0, 0.85), 0 0 2px rgba(0, 0, 0, 0.9);
+}
+
+.role-back:hover {
+  background: transparent;
+  text-decoration: underline;
+}
+
+.role-buttons {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.role-buttons button {
+  width: 100%;
+}
+
+.step-indicator {
+  font-size: 0.8rem;
+  font-family: "IBM Plex Mono", monospace;
+  color: #2a0a4d;
+  font-weight: bold;
+  margin-bottom: 0.75rem;
+}
+
+.step-nav {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.75rem;
+  margin-top: 1.25rem;
+}
+
+.step-nav button {
+  flex: 1;
+}
+
+/* --- Dashboard --- */
+.price-banner {
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 0.85rem;
+  font-weight: bold;
+  color: #2a0a4d;
+  margin: 0.25rem 0 0.75rem;
+  min-height: 1rem;
+}
+
+.swaps-box {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+  margin: 0.5rem 0 1rem;
+}
+
+.lookup-row {
+  display: flex;
+  gap: 0.5rem;
+  align-items: stretch;
+}
+
+.lookup-row input {
+  flex: 1;
+}
+
+.lookup-row button {
+  margin-top: 0;
+  white-space: nowrap;
+}
+
+.create-row button {
+  width: 100%;
+}
+
+.swap-card.overview {
+  cursor: default;
+}
+
+.card-dismiss {
+  position: relative;
+  top: -1.7rem;
+  left: .6rem;
+  width: 1rem;
+  height: 1rem;
+  font-size: 1.3rem;
+  font-weight: bold;
+  border: none;
+  background: transparent;
+  color: rgba(59, 5, 118, 0.75);
+  cursor: pointer;
+  border-radius: 4px;
+}
+
+.card-dismiss:hover {
+  background:transparent;
+  color:#00ff95;
+}
+
+/* Fee disclaimer on lock steps */
+.fee-disclaimer {
+  margin: 0.75rem 0 0;
+  padding: 0.55rem 0.7rem;
+  font-size: 0.8rem;
+  border-radius: 6px;
+  background: rgba(255, 200, 80, 0.12);
+  border: 1px solid rgba(255, 200, 80, 0.4);
+  color: #fff8e7;
+}
+
+.swap-card.overview.refundable {
+  box-shadow: 0 0 0 2px var(--warn);
+}
+
+.swap-badge {
+  font-size: 0.7rem;
+  font-weight: bold;
+  color: #551971;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 0.1rem 0.55rem;
+}
+
+.refund-badge {
+  font-size: 0.7rem;
+  font-weight: bold;
+  color: #3a0a0a;
+  background: var(--warn);
+  border-radius: 999px;
+  padding: 0.1rem 0.55rem;
+  margin-left: 0.4rem;
+}
+
+.card-actions {
+  display: flex;
+  gap: 0.5rem;
+  margin-top: 0.75rem;
+}
+
+.card-actions button {
+  margin-top: 0;
+  flex: 1;
+}
+
+.card-actions .refund-btn {
+  background: var(--warn);
+  color: #3a0a0a;
+}
+
+/* --- Swap summary card (click to copy) --- */
+.swap-card {
+  position: relative;
+  margin-top: 0.5rem;
+  padding: 1rem 1.1rem;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  cursor: pointer;
+  transition: box-shadow 0.15s ease, transform 0.05s ease;
+}
+
+.swap-card:hover {
+  box-shadow: 0 0 0 2px var(--accent);
+}
+
+.swap-card:active {
+  transform: translateY(1px);
+}
+
+.swap-card-title {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-weight: bold;
+  color: #2a0a4d;
+  margin-bottom: 0.6rem;
+}
+
+.swap-card-copy {
+  font-size: 0.7rem;
+  font-weight: bold;
+  color: #551971;
+  background: var(--accent);
+  border-radius: 999px;
+  padding: 0.15rem 0.6rem;
+}
+
+.swap-card-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 0.78rem;
+  padding: 0.15rem 0;
+}
+
+.swap-card-row .k {
+  color: var(--accent-dim);
+  font-weight: bold;
+}
+
+.swap-card-row .v {
+  color: var(--text);
+  word-break: break-all;
+  text-align: right;
+}
+
+.swap-card.copied {
+  box-shadow: 0 0 0 2px #2e7d32;
+}
+
+.swap-raw {
+  margin-top: 0.5rem;
+}
+
+.swap-raw summary {
+  cursor: pointer;
+  font-size: 0.75rem;
+  color: var(--muted);
+}
+
+.swap-raw textarea {
+  margin-top: 0.4rem;
+}
+
+.panel {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 40px;
+  padding: 1.25rem;
+}
+
+.panel h2 {
+  margin: 0 0 1rem;
+  font-size: 1.1rem;
+  color: var(--accent);
+}
+
+label {
+  display: block;
+  font-size: 0.8rem;
+  color: var(--muted);
+  margin: 0.75rem 0 0.25rem;
+}
+
+input,
+textarea {
+  width: 100%;
+  padding: 0.5rem 0.65rem;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--text);
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 0.85rem;
+}
+
+textarea {
+  min-height: 5rem;
+  resize: vertical;
+}
+
+button {
+  margin-top: 0.75rem;
+  padding: 0.55rem 1rem;
+  background: var(--accent);
+  color: #590f91;
+  font-weight: bold;
+  border: none;
+  border-radius: 4px;
+  font-size: 0.9rem;
+  cursor: pointer;
+}
+
+button:hover {
+  background: var(--accent-dim);
+}
+
+button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+button.secondary {
+  background: transparent;
+  color: var(--text);
+  border: 1px solid var(--border);
+  margin-left: 0.5rem;
+}
+button.secondary:hover {
+  background: var(--card);
+}
+
+/* Busy state during a wallet hand-off — subtle pulse so the user knows the
+   action is in flight (e.g. waiting on MetaMask/Iris to sign). */
+@keyframes pulse-busy {
+  0%,
+  100% {
+    opacity: 0.55;
+  }
+  50% {
+    opacity: 0.95;
+  }
+}
+
+button.busy,
+button.busy:disabled {
+  animation: pulse-busy 1.1s ease-in-out infinite;
+  cursor: progress;
+}
+
+.log {
+  margin-top: 1rem;
+  padding: 0.75rem;
+  background: var(--bg);
+  border-radius: 4px;
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 0.75rem;
+  white-space: pre-wrap;
+  word-break: break-all;
+  max-height: 12rem;
+  overflow-y: auto;
+}
+
+.log.error {
+  color: #00ff95;
+  font-weight: bold;
+  background-color: red;
+}
+
+.log.ok {
+  color: #8b21c0;
+  font-weight: bold;
+}
+
+.hint {
+  font-size: 0.75rem;
+  color: var(--muted);
+  margin-top: 0.5rem;
+}
+
+input:-webkit-autofill,
+  input:-webkit-autofill:focus {
+    transition: background-color 0s 600000s, color 0s 600000s !important;
+  }

@@ -1,0 +1,90 @@
+seller:
+DhkyfanJUp8AchYzPhAVhBVXzVkJNARPt1omA6sYfyYaJgNATUW5TUu
+0x690f9620C615C142bDe32FE5Aea30E114491da20
+
+buyer:
+8s29XUK8Do7QWt2MHfPdd1gDSta6db4c3bQrxP1YdJNfXpL3WPzTT5
+0xE2a4465f7E9978bc38D6b792C87Ba519B47Bd42a
+
+{"hNock":"5KwmcqkR94mLEVcJ9jU83EJxnmYSZDUYACSG8LW1Stqm1abkdV13XgG","hEvm":"0x57ce20d66b274c96e2a8bac4163b5dec31bcb76ff249f0c4e12acc99641927a3","sellerPkh":"DhkyfanJUp8AchYzPhAVhBVXzVkJNARPt1omA6sYfyYaJgNATUW5TUu","buyerPkh":"8s29XUK8Do7QWt2MHfPdd1gDSta6db4c3bQrxP1YdJNfXpL3WPzTT5","lockFirstName":"BUHw1b31hsGm1n4qhsgQUdD7BAmDuzm6cq6zXWrfSgbsosDP5mYqZCk","nockGift":"65536","nockRefundHeight":"82000","usdcTimelock":"1780712495"}
+
+Approve Iris lock:
+  HTLC gift: 1 NOCK → [BUHw1b31…qZCk]
+  Seller change: remainder → seller PKH
+  lock tree root (not claim addr): BQqdyfvkt6b2…
+After sign — tx: Transaction acknowledged
+Buyer claim lockFirstName: BUHw1b31hsGm…
+
+USDC locked (MetaMask).
+swapId: 0x344b6713d0326519c450b2aed796675f4c5fd5ae05571dfe80207a35d6126005
+
+USDC withdrawn — preimage is public on Base.
+tx: 0x766357d111cb6ac71596d266c0b045d3df3717e0a2246c87b20ea50f9292c0c9
+Give buyer this tx hash or they can scan by swapId.
+
+
+--------------------------
+
+{"hNock":"2o4PMCq3d6uUxcVZsYncUbX2F4bcYcDJQAv3Qo28GYY7CDs3WekhYVA","hEvm":"0xbbe2d079b33467ae5572e75e2c672f1fd1a0266a7f188a739e77dc99cda12eb4","sellerPkh":"DhkyfanJUp8AchYzPhAVhBVXzVkJNARPt1omA6sYfyYaJgNATUW5TUu","buyerPkh":"8s29XUK8Do7QWt2MHfPdd1gDSta6db4c3bQrxP1YdJNfXpL3WPzTT5","nockGift":"6553600","nockRefundHeight":"83000","usdcTimelock":"1780769229"}
+
+Approve Iris lock:
+  HTLC gift: 100 NOCK → [8sbGjuJR…BQiD]
+  Seller change: remainder → seller PKH
+  lock tree root (not claim addr): 5E1oKo5jMqum…
+After sign — tx: yJt2jDGog5No9fxjD4XPBZJGE3UmN15Ld6NGknrXuorLudMtiF7EyS
+Buyer claim lockFirstName: 8sbGjuJRbHWY…
+
+USDC locked (MetaMask).
+swapId: 0xa74f2a83d81bb8fd335132df81c8ac2b5a312b10a938758b73964725f141cf86
+
+USDC withdrawn — preimage is public on Base.
+tx: 0x1964fb9fb5a901259ea3111a29fdc0407c51bbe8073b250f21173c38c1195ff8
+Give buyer this tx hash or they can scan by swapId.
+
+
+{"hNock":"2o4PMCq3d6uUxcVZsYncUbX2F4bcYcDJQAv3Qo28GYY7CDs3WekhYVA","hEvm":"0xbbe2d079b33467ae5572e75e2c672f1fd1a0266a7f188a739e77dc99cda12eb4","sellerPkh":"DhkyfanJUp8AchYzPhAVhBVXzVkJNARPt1omA6sYfyYaJgNATUW5TUu","buyerPkh":"8s29XUK8Do7QWt2MHfPdd1gDSta6db4c3bQrxP1YdJNfXpL3WPzTT5","lockFirstName":"8sbGjuJRbHWYWNfbfvVEWTXxUwxkLxLPdPjc8CPMxBFb5brXBPoBQiD","lockRoot":"5E1oKo5jMqum4sdA5KDa6ZtE8bikSQDDoGfRs1z9gAHq6yaW6buzZUC","nockGift":"6553600","nockRefundHeight":"83000","usdcTimelock":"1780769229"}
+
+-----------------
+
+
+{"hNock":"38BAKLt2vEwsGWCzyXqMD3T5HoGr42tqaUBSvDBecGq7U5FHpiDe5jX","hEvm":"0x277cc9a20607302f75cd0b265f3f9aed6b2bb9f2269fc7b70d5aded4a13eeabb","sellerPkh":"DhkyfanJUp8AchYzPhAVhBVXzVkJNARPt1omA6sYfyYaJgNATUW5TUu","buyerPkh":"8s29XUK8Do7QWt2MHfPdd1gDSta6db4c3bQrxP1YdJNfXpL3WPzTT5","nockGift":"3276800","nockRefundHeight":"83000","usdcTimelock":"1780872862"}
+
+H_nock: 38BAKLt2vEwsGWCzyXqMD3T5HoGr42tqaUBSvDBecGq7U5FHpiDe5jX
+H_evm: 0x277cc9a20607302f75cd0b265f3f9aed6b2bb9f2269fc7b70d5aded4a13eeabb
+buyer pkh: 8s29XUK8Do7QWt2MHfPdd1gDSta6db4c3bQrxP1YdJNfXpL3WPzTT5
+lockFirstName: (filled after Lock NOCK — re-share JSON then)
+Preimage kept in this browser only.
+Share swap JSON with buyer (no secret).
+
+LOCKED
+Inputs (1)
+127.88 NOCK
+from
+[ CTZ4...4bWf ]
+Outputs (2)
+50 NOCK
+to
+[ 3mCt...bbgi ]
+70 NOCK
+to
+[ CTZ4...kNSh ]
+Network Fee
+7.88 NOCK
+
+{"hNock":"38BAKLt2vEwsGWCzyXqMD3T5HoGr42tqaUBSvDBecGq7U5FHpiDe5jX","hEvm":"0x277cc9a20607302f75cd0b265f3f9aed6b2bb9f2269fc7b70d5aded4a13eeabb","sellerPkh":"DhkyfanJUp8AchYzPhAVhBVXzVkJNARPt1omA6sYfyYaJgNATUW5TUu","buyerPkh":"8s29XUK8Do7QWt2MHfPdd1gDSta6db4c3bQrxP1YdJNfXpL3WPzTT5","lockFirstName":"3mCt7nT11XNGQmEvpaSSaU7QnkPpi3dy8Nf6cyabb4UxCU2bKjWoxN2","lockRoot":"2A9bkDu2fSJZN7edmhZD3BgyQJYMJL4zvEt7DfRZ3ftq3PUYmbYehNs","parentHash":"24Tzyp3RTE4moTp7zccTCzRepnBXAYAnp9quFndJrTWUkrjWXy7YFK2","birthOutputIndex":0,"nockGift":"3276800","nockRefundHeight":"83000","usdcTimelock":"1780872862"}
+
+Approve Iris lock:
+  HTLC gift: 50 NOCK → [3mCt7nT1…oxN2]
+  Seller change: remainder → seller PKH
+  lock tree root (not claim addr): 2A9bkDu2fSJZ…
+After sign — tx: 85NPnSz8ragT9khAbwrsoFJxRUZUVCqFwJoFWjxZqeNRxHfVgM3ZaEU
+Buyer claim lockFirstName: 3mCt7nT11XNG…
+
+USDC locked (MetaMask).
+swapId: 0x6bdd97b207fe47a883064023623e5f20f3df6e40f6641e41cb07347464cf611a
+
+USDC withdrawn — preimage is public on Base.
+tx: 0x275f0d071a5df19d2b93cc5cfe49fff8e876b7676eba4b820767ca53ba877f49
+Give buyer this tx hash or they can scan by swapId.
+
+---------------------

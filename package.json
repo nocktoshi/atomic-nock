@@ -1,0 +1,14 @@
+{
+  "name": "atomicnock",
+  "private": true,
+  "workspaces": [
+    "web"
+  ],
+  "scripts": {
+    "dev": "npm run dev -w web",
+    "build": "npm run build -w web"
+  },
+  "devDependencies": {
+    "wrangler": "^4.98.0"
+  }
+}

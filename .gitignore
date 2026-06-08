@@ -1,0 +1,17 @@
+node_modules/
+dist/
+.env
+.DS_Store
+
+contracts/out/
+contracts/cache/
+contracts/broadcast/
+
+web/public/pkg/
+vendor/iris-rs/
+
+*.log
+.env
+target/
+.claude
+debug

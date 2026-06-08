@@ -1,0 +1,18 @@
+name = "nock-otc-kv"
+main = "src/index.ts"
+compatibility_date = "2024-11-01"
+
+[[routes]]
+pattern = "api.atomicnock.com"
+zone_name = "atomicnock.com"
+custom_domain = true
+enabled = true
+previews_enabled = false
+
+[[kv_namespaces]]
+binding = "SWAPS"
+id = "5851f03bf8614f54a6228a5aa18c6e65"
+
+# Shared write token. Set as a secret (not committed):
+#   wrangler secret put KV_TOKEN
+# and use the same value as the web app's VITE_KV_TOKEN.
