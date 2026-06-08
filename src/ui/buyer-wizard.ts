@@ -7,21 +7,24 @@ import {
 } from "../actions/buyer.js";
 import { getSwapRepository } from "../app/repo/swap-repo.js";
 import { swapStatus } from "../app/roles.js";
-import { connectIrisWallet, waitForIrisWallet } from "../nock/wallet.js";
-import { connectEvmWallet } from "../evm/wallet.js";
-import { el, field, runBusy } from "./dom.js";
+import { el, field } from "./dom.js";
 import { addressField } from "./address-field.js";
 import { mountWizard, type WizardStep } from "./wizard.js";
-import { log, logErr, setWalletStatus } from "./log.js";
+import { log, logErr } from "./log.js";
 import { swapCard } from "./swap-card.js";
 
-/** Build the buyer (USDC → NOCK) wizard. Requires session.activeSwap to be set. */
+/** Build the buyer (USDC → NOCK) wizard. Wallets are already connected via the dashboard. */
 export function buildBuyerWizard(container: HTMLElement, session: SwapSession): void {
   const repo = getSwapRepository();
   const heading = el("h2", { class: "flow-title", text: "Buyer (USDC → NOCK)" });
-  const sharedLog = el("div", { class: "log", text: "Connect wallets to start." });
+  const sharedLog = el("div", { class: "log", text: "" });
   const wizardRoot = el("div");
   const shareArea = el("div");
+
+  // Show wallet status in the log on entry.
+  const irisLabel = session.nock ? `Iris: ${session.nock.pkh.slice(0, 16)}…` : "Iris: not connected";
+  const evmLabel = session.evm ? `MetaMask: ${session.evm}` : "MetaMask: not connected";
+  log(sharedLog, `${irisLabel}\n${evmLabel}`, true);
 
   function refreshShare(): void {
     if (session.activeSwap) {
@@ -43,55 +46,7 @@ export function buildBuyerWizard(container: HTMLElement, session: SwapSession): 
     return preimageJam;
   }
 
-  // --- Step 1: connect ------------------------------------------------------
-  const connectStep: WizardStep = {
-    id: "connect",
-    title: "Connect wallets",
-    canAdvance() {
-      return !!(session.nock && session.evm);
-    },
-    render(ctx) {
-      const body = el("div");
-      const irisStatus = el("span", { class: "wallet-status", text: "Iris: not connected" });
-      const evmStatus = el("span", { class: "wallet-status", text: "MetaMask: not connected" });
-      if (session.nock) setWalletStatus(irisStatus, "iris", true, session.nock.pkh.slice(0, 16) + "…");
-      if (session.evm) setWalletStatus(evmStatus, "evm", true, session.evm);
-
-      const proceed = () => {
-        if (session.nock && session.evm) ctx.advance();
-        else ctx.rerender();
-      };
-
-      const irisBtn = el("button", { type: "button", text: "Connect Iris" });
-      irisBtn.onclick = () =>
-        runBusy(irisBtn, async () => {
-          session.nock = await connectIrisWallet();
-          log(sharedLog, `Iris connected.\npkh: ${session.nock.pkh}`, true);
-          proceed();
-        }).catch((e) => logErr(sharedLog, e));
-
-      const evmBtn = el("button", { type: "button", text: "Connect MetaMask" });
-      evmBtn.onclick = () =>
-        runBusy(evmBtn, async () => {
-          session.evm = await connectEvmWallet();
-          log(sharedLog, `MetaMask: ${session.evm}`, true);
-          proceed();
-        }).catch((e) => logErr(sharedLog, e));
-
-      waitForIrisWallet(1500)
-        .then(() => { if (!session.nock) irisStatus.textContent = "Iris: extension detected (click Connect)"; })
-        .catch(() => { irisStatus.textContent = "Iris: install extension"; });
-
-      body.append(
-        el("div", { class: "wallet-row" }, [irisBtn, irisStatus]),
-        el("div", { class: "wallet-row" }, [evmBtn, evmStatus]),
-        el("p", { class: "hint", text: "Connect both wallets to continue." })
-      );
-      return body;
-    },
-  };
-
-  // --- Step 2: lock USDC ----------------------------------------------------
+  // --- Step 1: lock USDC ----------------------------------------------------
   const lockStep: WizardStep = {
     id: "lock-usdc",
     title: "Lock USDC",
@@ -125,7 +80,7 @@ export function buildBuyerWizard(container: HTMLElement, session: SwapSession): 
     },
   };
 
-  // --- Step 3: load preimage ------------------------------------------------
+  // --- Step 2: load preimage ------------------------------------------------
   let withdrawTxInput: HTMLInputElement;
   let autoLoadTried = false;
   const preimageStep: WizardStep = {
@@ -151,7 +106,6 @@ export function buildBuyerWizard(container: HTMLElement, session: SwapSession): 
       withdrawTxInput = tx.input;
       body.append(status, tx.row);
 
-      // Auto-load once when the swap already records a Base withdraw tx.
       if (!session.buyerPreimageJam && hasWithdraw && !autoLoadTried) {
         autoLoadTried = true;
         ensurePreimage("")
@@ -169,7 +123,7 @@ export function buildBuyerWizard(container: HTMLElement, session: SwapSession): 
     },
   };
 
-  // --- Step 4: claim --------------------------------------------------------
+  // --- Step 3: claim --------------------------------------------------------
   const claimStep: WizardStep = {
     id: "claim",
     title: "Claim NOCK",
@@ -193,7 +147,6 @@ export function buildBuyerWizard(container: HTMLElement, session: SwapSession): 
         })
       );
 
-      // Auto-load when the swap records a Base withdraw and we haven't yet.
       if (!preimageReady && hasWithdraw && !autoLoadTried) {
         autoLoadTried = true;
         ensurePreimage("")
@@ -231,14 +184,16 @@ export function buildBuyerWizard(container: HTMLElement, session: SwapSession): 
     },
   };
 
-  const steps = [connectStep, lockStep, preimageStep, claimStep, doneStep];
-  let initialStep = session.nock && session.evm ? 1 : 0;
-  if (session.activeSwap && session.nock && session.evm) {
+  // Steps: lock(0) → preimage(1) → claim(2) → done(3)
+  const steps = [lockStep, preimageStep, claimStep, doneStep];
+
+  let initialStep = 0;
+  if (session.activeSwap) {
     const st = swapStatus(session.activeSwap);
-    if (st === "claimed" || st === "refunded") initialStep = 4;
-    else if (st === "withdrawn") initialStep = 3;
-    else if (st === "usdc-locked") initialStep = 2;
-    else initialStep = 1;
+    if (st === "claimed" || st === "refunded") initialStep = 3;
+    else if (st === "withdrawn") initialStep = 2;
+    else if (st === "usdc-locked") initialStep = 1;
+    else initialStep = 0;
   }
 
   container.append(heading, wizardRoot, sharedLog, shareArea);

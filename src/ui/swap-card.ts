@@ -1,5 +1,6 @@
 import type { SwapPublic } from "../swap.js";
 import { el } from "./dom.js";
+import { reverseResolveNock } from "./name-resolve.js";
 
 const NICKS_PER_NOCK = 65536;
 
@@ -10,20 +11,16 @@ function short(s: string | undefined, head = 8, tail = 6): string {
 
 function formatNock(nicks: bigint): string {
   const nock = Number(nicks) / NICKS_PER_NOCK;
-  // Trim trailing zeros, keep up to 6 decimals.
   return `${parseFloat(nock.toFixed(6))} NOCK`;
 }
 
-/** Copy text to the clipboard, with a fallback for non-secure / restricted contexts. */
 async function copyText(text: string): Promise<boolean> {
   try {
     if (navigator.clipboard?.writeText) {
       await navigator.clipboard.writeText(text);
       return true;
     }
-  } catch {
-    /* fall through to legacy path */
-  }
+  } catch { /* fall through */ }
   try {
     const ta = document.createElement("textarea");
     ta.value = text;
@@ -46,26 +43,41 @@ function row(k: string, v: string): HTMLElement {
   ]);
 }
 
-/**
- * A compact, click-to-copy summary of a swap. Clicking the card (or its Copy
- * pill) copies the full swap JSON to the clipboard.
- */
+/** Resolve a nock address to a friendly name; update the element in-place if found. */
+function resolveAndUpdate(address: string | undefined, el: HTMLElement): void {
+  if (!address) return;
+  reverseResolveNock(address).then((name) => {
+    if (name !== address) {
+      el.textContent = name;
+      el.title = address;
+    }
+  });
+}
+
 export function swapCard(swap: SwapPublic, json: string): HTMLElement {
   const copyPill = el("span", { class: "swap-card-copy", text: "Copy JSON" });
+
+  const sellerVal = el("span", { class: "v", text: short(swap.sellerPkh) });
+  const buyerVal = el("span", { class: "v", text: short(swap.buyerPkh) });
+
   const card = el("div", { class: "swap-card" }, [
     el("div", { class: "swap-card-title" }, [
       el("span", { text: "Swap" }),
       copyPill,
     ]),
     row("Hashlock", short(swap.hEvm)),
-    row("Seller", short(swap.sellerPkh)),
-    row("Buyer", short(swap.buyerPkh)),
+    el("div", { class: "swap-card-row" }, [el("span", { class: "k", text: "Seller" }), sellerVal]),
+    el("div", { class: "swap-card-row" }, [el("span", { class: "k", text: "Buyer" }), buyerVal]),
     row("Amount", formatNock(swap.nockGift)),
     row("Refund height", swap.nockRefundHeight.toString()),
     ...(swap.lockFirstName ? [row("Claim name", short(swap.lockFirstName))] : []),
     ...(swap.nockLockTxId ? [row("NOCK lock tx", short(swap.nockLockTxId))] : []),
     ...(swap.usdcLockTxHash ? [row("USDC lock tx", short(swap.usdcLockTxHash))] : []),
   ]);
+
+  // Async: update seller/buyer display with .nock names if available.
+  resolveAndUpdate(swap.sellerPkh, sellerVal);
+  resolveAndUpdate(swap.buyerPkh, buyerVal);
 
   card.title = "Click to copy full swap JSON";
   card.onclick = async () => {
@@ -81,10 +93,6 @@ export function swapCard(swap: SwapPublic, json: string): HTMLElement {
   return card;
 }
 
-/**
- * Seller share block: the card plus a collapsible raw-JSON textarea (so the full
- * shareable string is still available for manual paste).
- */
 export function swapShare(swap: SwapPublic, json: string): DocumentFragment {
   const frag = document.createDocumentFragment();
   const details = el("details", { class: "swap-raw" });

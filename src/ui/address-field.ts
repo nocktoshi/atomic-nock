@@ -1,10 +1,10 @@
 /**
- * Address input field that supports .nock and .eth name resolution.
- * Shows a "Resolve" button when a name is detected; resolved addresses
- * are stored separately so transactions always use the full address.
+ * Address input field with automatic .nock / .eth name resolution.
+ * Resolves names on a short debounce after the user stops typing — no button needed.
+ * Resolved address is stored separately so transactions always use the full address.
  */
 import { el } from "./dom.js";
-import { isNockName, isEnsName, resolveAddress } from "./name-resolve.js";
+import { isNockName, isEnsName, resolveAddress, reverseResolveNock } from "./name-resolve.js";
 import { isPlausibleWalletAddress } from "../nock/balance.js";
 
 export type AddressKind = "nock" | "eth";
@@ -17,120 +17,114 @@ export interface AddressFieldOpts {
 }
 
 export interface AddressField {
-  /** The container fragment to append to the DOM. */
   row: DocumentFragment;
-  /** Raw <input> element — useful for focus / pattern validation. */
   input: HTMLInputElement;
-  /** Always the full resolved address (or raw input if resolution hasn't happened). */
+  /** Full resolved address, or raw input value if no resolution needed. */
   getValue(): string;
-  /** Set the field to a known full address, clearing any display-name state. */
   setValue(addr: string): void;
 }
 
 const ETH_RE = /^0x[0-9a-fA-F]{40}$/;
+const DEBOUNCE_MS = 400;
 
 function validateNock(v: string): string | null {
   if (!v) return null;
-  if (!isPlausibleWalletAddress(v)) {
-    return "Nockchain address must be base58 (~48–55 chars)";
-  }
-  return null;
+  return isPlausibleWalletAddress(v) ? null : "Nockchain address must be base58 (~48–55 chars)";
 }
 
 function validateEth(v: string): string | null {
   if (!v) return null;
-  if (!ETH_RE.test(v)) {
-    return "Ethereum address must be 0x followed by 40 hex characters";
-  }
-  return null;
+  return ETH_RE.test(v) ? null : "Ethereum address must be 0x followed by 40 hex characters";
 }
 
 export function addressField(opts: AddressFieldOpts): AddressField {
-  const { label, kind } = opts;
+  const { kind } = opts;
   const frag = document.createDocumentFragment();
 
-  const labelEl = el("label", { text: label });
-
-  const inputWrapper = el("div", { class: "addr-field-wrap" });
-
+  const labelEl = el("label", { text: opts.label });
   const input = el("input", {
     type: "text",
-    placeholder: kind === "nock"
-      ? "base58 address or name.nock"
-      : "0x… address or name.eth",
+    placeholder: kind === "nock" ? "base58 address or name.nock" : "0x… address or name.eth",
     ...(opts.readonly ? { readonly: true } : {}),
   });
   if (opts.initialValue) input.value = opts.initialValue;
 
-  const resolveBtn = el("button", {
-    type: "button",
-    class: "addr-resolve-btn secondary",
-    text: "Resolve",
-  });
-
   const hint = el("span", { class: "addr-resolve-hint" });
 
-  // Resolved address (full). Empty means use input.value directly.
   let resolvedAddress = "";
-  let displayName = "";
+  let debounceTimer: ReturnType<typeof setTimeout> | null = null;
 
   function isName(v: string): boolean {
     return kind === "nock" ? isNockName(v) : isEnsName(v);
   }
 
-  function validate(addr: string): string | null {
-    return kind === "nock" ? validateNock(addr) : validateEth(addr);
+  function setHint(text: string, cls: "ok" | "error" | ""): void {
+    hint.textContent = text;
+    hint.className = "addr-resolve-hint" + (cls ? ` ${cls}` : "");
   }
 
-  function updateResolveBtn(): void {
-    const v = input.value.trim();
-    const needsResolve = isName(v);
-    resolveBtn.style.display = opts.readonly ? "none" : needsResolve ? "inline-block" : "none";
-    if (!needsResolve) {
+  function isValidAddress(v: string): boolean {
+    return kind === "nock" ? isPlausibleWalletAddress(v) : ETH_RE.test(v);
+  }
+
+  /** Forward-resolve a .nock/.eth name → address, show the address in hint. */
+  async function doForwardResolve(v: string): Promise<void> {
+    setHint("Resolving…", "");
+    try {
+      const result = await resolveAddress(v);
+      resolvedAddress = result.address;
+      setHint(`✅ ${result.address}`, "ok");
+    } catch (e) {
       resolvedAddress = "";
-      displayName = "";
-      hint.textContent = "";
-      hint.className = "addr-resolve-hint";
-      const err = validate(v);
-      if (v && err) {
-        hint.textContent = err;
-        hint.className = "addr-resolve-hint error";
+      setHint(e instanceof Error ? e.message : "Resolution failed", "error");
+    }
+  }
+
+  /** Reverse-resolve a plain address → .nock name, show name in hint if found. */
+  async function doReverseResolve(v: string): Promise<void> {
+    // Only nock addresses have .nock names; ETH reverse-resolve is not supported.
+    if (kind !== "nock") return;
+    const name = await reverseResolveNock(v);
+    // reverseResolveNock returns the address unchanged if no name found — don't show hint.
+    if (name !== v) setHint('✅ ' + name, "ok");
+  }
+
+  function onInput(): void {
+    resolvedAddress = "";
+    if (debounceTimer) clearTimeout(debounceTimer);
+
+    const v = input.value.trim();
+    if (!v) { setHint("", ""); return; }
+
+    if (isName(v)) {
+      setHint("Resolving…", "");
+      debounceTimer = setTimeout(() => void doForwardResolve(v), DEBOUNCE_MS);
+    } else {
+      const err = kind === "nock" ? validateNock(v) : validateEth(v);
+      if (err) {
+        setHint(err, "error");
+      } else {
+        setHint("", "");
+        // Valid address — look up a friendly name in the background.
+        debounceTimer = setTimeout(() => void doReverseResolve(v), DEBOUNCE_MS);
       }
     }
   }
 
-  input.addEventListener("input", () => {
-    resolvedAddress = "";
-    displayName = "";
-    updateResolveBtn();
-  });
-
-  resolveBtn.onclick = async () => {
-    const v = input.value.trim();
-    resolveBtn.disabled = true;
-    resolveBtn.textContent = "Resolving…";
-    hint.textContent = "";
-    hint.className = "addr-resolve-hint";
-    try {
-      const result = await resolveAddress(v);
-      resolvedAddress = result.address;
-      displayName = result.displayName;
-      hint.textContent = `→ ${result.address}`;
-      hint.className = "addr-resolve-hint ok";
-    } catch (e) {
-      hint.textContent = e instanceof Error ? e.message : "Resolution failed";
-      hint.className = "addr-resolve-hint error";
-      resolvedAddress = "";
-    } finally {
-      resolveBtn.disabled = false;
-      resolveBtn.textContent = "Resolve";
+  if (!opts.readonly) {
+    input.addEventListener("input", onInput);
+    // Trigger reverse lookup for a pre-filled valid address.
+    if (opts.initialValue && !isName(opts.initialValue)) {
+      if (isValidAddress(opts.initialValue)) {
+        void doReverseResolve(opts.initialValue);
+      } else if (opts.initialValue) {
+        const err = kind === "nock" ? validateNock(opts.initialValue) : validateEth(opts.initialValue);
+        if (err) setHint(err, "error");
+      }
     }
-  };
+  }
 
-  inputWrapper.append(input, resolveBtn);
-  frag.append(labelEl, inputWrapper, hint);
-
-  updateResolveBtn();
+  frag.append(labelEl, input, hint);
 
   return {
     row: frag,
@@ -141,10 +135,13 @@ export function addressField(opts: AddressFieldOpts): AddressField {
     setValue(addr: string) {
       input.value = addr;
       resolvedAddress = "";
-      displayName = "";
-      hint.textContent = "";
-      hint.className = "addr-resolve-hint";
-      updateResolveBtn();
+      if (debounceTimer) clearTimeout(debounceTimer);
+      setHint("", "");
+      if (!opts.readonly && addr && !isName(addr)) {
+        if (isValidAddress(addr)) {
+          void doReverseResolve(addr);
+        }
+      }
     },
   };
 }

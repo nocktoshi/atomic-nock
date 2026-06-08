@@ -56,7 +56,7 @@ export function renderDashboard(app: HTMLElement, session: SwapSession): void {
 
   async function loadPrice(): Promise<void> {
     const usd = await price.getNockUsd();
-    priceBanner.textContent = usd != null ? `NOCK ≈ $${usd.toFixed(4)} USD` : "";
+    priceBanner.textContent = usd != null ? `$NOCK ≈ $${usd.toFixed(4)} USD` : "";
   }
 
   async function refreshSwaps(): Promise<void> {

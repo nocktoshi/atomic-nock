@@ -7,25 +7,27 @@ import {
 import { getSwapRepository } from "../app/repo/swap-repo.js";
 import { secretStore } from "../app/storage/secret-store.js";
 import { swapStatus } from "../app/roles.js";
-import { connectIrisWallet, waitForIrisWallet } from "../nock/wallet.js";
-import { connectEvmWallet } from "../evm/wallet.js";
-import { isPlausibleWalletAddress } from "../nock/balance.js";
-import { fetchCurrentBlockHeight } from "../nock/balance.js";
-import { el, field, runBusy } from "./dom.js";
+import { isPlausibleWalletAddress, fetchCurrentBlockHeight } from "../nock/balance.js";
+import { el, field } from "./dom.js";
 import { addressField } from "./address-field.js";
 import { mountWizard, type WizardStep } from "./wizard.js";
-import { log, logErr, setWalletStatus } from "./log.js";
+import { log, logErr } from "./log.js";
 import { swapShare } from "./swap-card.js";
 
-/** Build the seller (NOCK → USDC) wizard. Operates on session.activeSwap. */
+/** Build the seller (NOCK → USDC) wizard. Wallets are already connected via the dashboard. */
 export function buildSellerWizard(container: HTMLElement, session: SwapSession): void {
   const repo = getSwapRepository();
   const heading = el("h2", { class: "flow-title", text: "Seller (NOCK → USDC)" });
   const wizardRoot = el("div");
   const shareArea = el("div");
-  const sharedLog = el("div", { class: "log", text: "Connect wallets to start." });
+  const sharedLog = el("div", { class: "log", text: "" });
 
   const persist = () => (session.activeSwap ? repo.put(session.activeSwap) : Promise.resolve());
+
+  // Show wallet status in the log on entry.
+  const irisLabel = session.nock ? `Iris: ${session.nock.pkh.slice(0, 16)}…` : "Iris: not connected";
+  const evmLabel = session.evm ? `MetaMask: ${session.evm}` : "MetaMask: not connected";
+  log(sharedLog, `${irisLabel}\n${evmLabel}`, true);
 
   function refreshShare(): void {
     if (session.activeSwap) {
@@ -38,55 +40,7 @@ export function buildSellerWizard(container: HTMLElement, session: SwapSession):
   }
   refreshShare();
 
-  // --- Step 1: connect Iris + MetaMask -------------------------------------
-  const connectStep: WizardStep = {
-    id: "connect",
-    title: "Connect wallets",
-    canAdvance() {
-      return !!(session.nock && session.evm);
-    },
-    render(ctx) {
-      const body = el("div");
-      const irisStatus = el("span", { class: "wallet-status", text: "Iris: not connected" });
-      const evmStatus = el("span", { class: "wallet-status", text: "MetaMask: not connected" });
-      if (session.nock) setWalletStatus(irisStatus, "iris", true, session.nock.pkh.slice(0, 16) + "…");
-      if (session.evm) setWalletStatus(evmStatus, "evm", true, session.evm);
-
-      const proceed = () => {
-        if (session.nock && session.evm) ctx.advance();
-        else ctx.rerender();
-      };
-
-      const irisBtn = el("button", { type: "button", text: "Connect Iris" });
-      irisBtn.onclick = () =>
-        runBusy(irisBtn, async () => {
-          session.nock = await connectIrisWallet();
-          log(sharedLog, `Iris connected.\npkh: ${session.nock.pkh}`, true);
-          proceed();
-        }).catch((e) => logErr(sharedLog, e));
-
-      const evmBtn = el("button", { type: "button", text: "Connect MetaMask" });
-      evmBtn.onclick = () =>
-        runBusy(evmBtn, async () => {
-          session.evm = await connectEvmWallet();
-          log(sharedLog, `MetaMask: ${session.evm}`, true);
-          proceed();
-        }).catch((e) => logErr(sharedLog, e));
-
-      waitForIrisWallet(1500)
-        .then(() => { if (!session.nock) irisStatus.textContent = "Iris: extension detected (click Connect)"; })
-        .catch(() => { irisStatus.textContent = "Iris: install extension"; });
-
-      body.append(
-        el("div", { class: "wallet-row" }, [irisBtn, irisStatus]),
-        el("div", { class: "wallet-row" }, [evmBtn, evmStatus]),
-        el("p", { class: "hint", text: "Connect both wallets to continue." })
-      );
-      return body;
-    },
-  };
-
-  // --- Step 2: generate swap ------------------------------------------------
+  // --- Step 1: generate swap ------------------------------------------------
   let nockAddrField: ReturnType<typeof addressField>;
   let buyerNockField: ReturnType<typeof addressField>;
   let giftInput: HTMLInputElement;
@@ -129,17 +83,15 @@ export function buildSellerWizard(container: HTMLElement, session: SwapSession):
       refundInput = refund.input;
       if (session.activeSwap) {
         refundInput.value = session.activeSwap.nockRefundHeight.toString();
-      } else {
-        // Attempt to auto-populate with current block + 500.
-        if (session.nock) {
-          fetchCurrentBlockHeight(session.nock)
-            .then((h) => {
-              if (h != null && !refundInput.value) {
-                refundInput.value = (h + 500n).toString();
-              }
-            })
-            .catch(() => { /* leave blank */ });
-        }
+      } else if (session.nock) {
+        // Auto-populate with current block + 500 (~1 day at 2.5 min blocks).
+        fetchCurrentBlockHeight(session.nock)
+          .then((h) => {
+            if (h != null && !refundInput.value) {
+              refundInput.value = (h + 500n).toString();
+            }
+          })
+          .catch(() => { /* leave blank — user can enter manually */ });
       }
 
       body.append(
@@ -172,7 +124,7 @@ export function buildSellerWizard(container: HTMLElement, session: SwapSession):
     },
   };
 
-  // --- Step 3: lock NOCK ----------------------------------------------------
+  // --- Step 2: lock NOCK ----------------------------------------------------
   let lockAddrField: ReturnType<typeof addressField>;
   const lockStep: WizardStep = {
     id: "lock-nock",
@@ -188,7 +140,7 @@ export function buildSellerWizard(container: HTMLElement, session: SwapSession):
       body.append(
         lockAddrField.row,
         el("p", { class: "hint", text: "After locking, the swap carries lockFirstName so the buyer can claim." }),
-        el("p", { class: "fee-disclaimer", text: "Fee: a 0.5% protocol fee is deducted from your USDC when you withdraw. You receive 99.5% of the locked USDC." })
+        el("p", { class: "fee-disclaimer", text: "Fee: a 0.5% protocol fee is deducted from the USDC withdrawal." })
       );
       return body;
     },
@@ -210,7 +162,7 @@ export function buildSellerWizard(container: HTMLElement, session: SwapSession):
     },
   };
 
-  // --- Step 4: withdraw USDC ------------------------------------------------
+  // --- Step 3: withdraw USDC ------------------------------------------------
   const withdrawStep: WizardStep = {
     id: "withdraw-usdc",
     title: "Withdraw USDC",
@@ -242,15 +194,15 @@ export function buildSellerWizard(container: HTMLElement, session: SwapSession):
     },
   };
 
-  const steps = [connectStep, generateStep, lockStep, withdrawStep, doneStep];
-  // Resume at the right step based on persisted status.
-  let initialStep = session.nock && session.evm ? 1 : 0;
+  // Steps: generate(0) → lock(1) → withdraw(2) → done(3)
+  const steps = [generateStep, lockStep, withdrawStep, doneStep];
+
+  let initialStep = 0;
   if (session.activeSwap) {
     const st = swapStatus(session.activeSwap);
-    if (st === "withdrawn" || st === "claimed" || st === "refunded") initialStep = 4;
-    else if (st === "nock-locked" || st === "usdc-locked") initialStep = 3;
-    else initialStep = 2;
-    if (!session.nock || !session.evm) initialStep = 0;
+    if (st === "withdrawn" || st === "claimed" || st === "refunded") initialStep = 3;
+    else if (st === "nock-locked" || st === "usdc-locked") initialStep = 2;
+    else initialStep = 1;
   }
 
   container.append(heading, wizardRoot, sharedLog, el("label", { text: "Swap ID (share with buyer)" }), shareArea);

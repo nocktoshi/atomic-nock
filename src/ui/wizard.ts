@@ -90,7 +90,7 @@ export function mountWizard(
     const step = steps[ctrl.index];
 
     const indicator = el("div", { class: "step-indicator" }, [
-      `Step ${ctrl.index + 1} of ${steps.length} — ${step.title}`,
+      `${step.title}`,
     ]);
 
     const nav = el("div", { class: "step-nav" });

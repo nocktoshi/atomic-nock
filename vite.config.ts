@@ -6,8 +6,6 @@ export default defineConfig(({ mode }) => {
     env.VITE_NOCK_GRPC_UPSTREAM ?? "https://rpc.nockchain.net";
 
   return {
-    /** Repo-root `.env` (same file as Foundry deploy / Makefile). */
-    envDir: "..",
     server: {
       port: 5173,
       proxy: {
