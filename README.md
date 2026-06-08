@@ -1,4 +1,6 @@
-# AtomicNock
+<img width="616" height="176" alt="image" src="https://github.com/user-attachments/assets/702681c9-6bc1-4e9e-8a68-32d55a57bcc1" />
+
+# Atomic Nock
 
 Cross-chain hash-time-locked swap: native **NOCK** on Nockchain (iris-wasm + `hax`) and **USDC** on **Base mainnet** (minimal HTLC).
 
