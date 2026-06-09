@@ -14,6 +14,7 @@ interface ElAttrs {
   readonly?: boolean;
   text?: string;
   html?: string;
+  for?: string;
   [data: `data-${string}`]: string | undefined;
 }
 

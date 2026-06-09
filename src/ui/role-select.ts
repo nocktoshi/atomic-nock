@@ -3,7 +3,7 @@ import type { SwapPublic } from "../swap.js";
 import type { Role } from "../app/roles.js";
 import { roleForSwap, swapStatus, refundAvailability } from "../app/roles.js";
 import { getSwapRepository } from "../app/repo/swap-repo.js";
-import { createPriceProvider } from "../market/price.js";
+
 import { buildSellerWizard } from "./seller-wizard.js";
 import { buildBuyerWizard } from "./buyer-wizard.js";
 import { swapOverviewCard } from "./swap-overview-card.js";
@@ -14,17 +14,12 @@ import { el, runBusy } from "./dom.js";
 import { log, logErr } from "./log.js";
 
 
-const price = createPriceProvider();
-
 /** Dashboard: connect wallets, auto-list your swaps, look up by id, create new. */
 export function renderDashboard(app: HTMLElement, session: SwapSession): void {
   const repo = getSwapRepository();
 
-  const priceBanner = el("div", { class: "price-banner", text: "" });
   const swapsBox = el("div", { class: "swaps-box" });
   const dashLog = el("div", { class: "log", text: "Welcome to Atomic Nock. Ready to swap." });
-
-  void loadPrice();
 
   function home(): void {
     renderDashboard(app, session);
@@ -48,10 +43,7 @@ export function renderDashboard(app: HTMLElement, session: SwapSession): void {
     openWizard(role);
   }
 
-  async function loadPrice(): Promise<void> {
-    const usd = await price.getNockUsd();
-    priceBanner.textContent = usd != null ? `$NOCK ≈ $${usd.toFixed(4)} USD` : "";
-  }
+
 
   async function refreshSwaps(): Promise<void> {
     if (!session.nock && !session.evm) return;
@@ -94,7 +86,7 @@ export function renderDashboard(app: HTMLElement, session: SwapSession): void {
           onRefund: () => void doRefund(swap, role),
           onHide: () => {
             hideSwap(swap.hEvm);
-            log(dashLog, "Swap hidden from this device (not deleted).", true);
+            log(dashLog, "Swap deleted.", true);
             void refreshSwaps();
           },
         });
@@ -123,7 +115,7 @@ export function renderDashboard(app: HTMLElement, session: SwapSession): void {
   }
 
   // --- lookup by id ---
-  const lookupInput = el("input", { placeholder: "Swap ID (0x…) from the seller" });
+  const lookupInput = el("input", { placeholder: "Swap ID (0x…) from the seller", id: "swap-id" });
   const lookupBtn = el("button", { type: "button", text: "Open swap" });
   lookupBtn.onclick = () =>
     runBusy(lookupBtn, async () => {
@@ -144,15 +136,15 @@ export function renderDashboard(app: HTMLElement, session: SwapSession): void {
     openWizard("seller");
   };
 
-  const panel = el("section", { class: "panel" }, [
-    el("h2", { class: "flow-title", text: "Your swaps" }),
-    priceBanner,
-    dashLog,
-    swapsBox,
-    el("label", { text: "Open a swap by ID" }),
-    el("div", { class: "lookup-row" }, [lookupInput, lookupBtn]),
-    el("div", { class: "create-row" }, [createBtn]),
-  ]);
+  const panel =
+    el("section", { class: "panel" }, [
+      el("h2", { class: "flow-title", text: "Your swaps" }),
+      dashLog,
+      swapsBox,
+      el("label", { text: "Open a swap by ID", for: "swap-id" }),
+      el("div", { class: "lookup-row" }, [lookupInput, lookupBtn]),
+      el("div", { class: "create-row" }, [createBtn]),
+    ]);
 
   app.replaceChildren(panel);
   if (session.nock || session.evm) void refreshSwaps();

@@ -12,28 +12,48 @@
 * {
   box-sizing: border-box;
 }
+/* Local font: Berkeley Mono */
+@font-face {
+  font-family: "Berkeley Mono";
+  src: url("./assets/BerkeleyMono-Regular.ttf") format("truetype");
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "Berkeley Mono";
+  src: url("./assets/BerkeleyMono-Oblique.ttf") format("truetype");
+  font-weight: 400;
+  font-style: italic;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "Berkeley Mono";
+  src: url("./assets/BerkeleyMono-Bold.ttf") format("truetype");
+  font-weight: 700;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "Berkeley Mono";
+  src: url("./assets/BerkeleyMono-Bold-Oblique.ttf") format("truetype");
+  font-weight: 700;
+  font-style: italic;
+  font-display: swap;
+}
+
+* {
+  font-family: "Berkeley Mono", monospace;
+}
 
 body {
   margin: 0;
-  font-family: "IBM Plex Sans", system-ui, sans-serif;
   background: var(--bg);
   color: var(--text);
   line-height: 1.5;
-}
-
-header {
-  padding: 1.5rem 2rem;
-  border-bottom: 1px solid var(--border);
-  text-align: center;
-}
-
-header.logo {
-  background-image: url("/atomicnock-logo.png");
-  background-repeat: no-repeat;
-  background-position: center;
-  background-size: contain;
-  min-height: 180px;
-  border-bottom: none;
 }
 
 h1 {
@@ -98,7 +118,7 @@ h1 {
 
 main {
   display: block;
-  background-image: url("/bg.png");
+  background-image: url("assets/bg.jpg");
   background-position: top center;
   max-width: 720px;
   padding: 190px 3rem 3rem 3rem;
@@ -152,7 +172,6 @@ main {
 
 .step-indicator {
   font-size: 1.1rem;
-  font-family: "IBM Plex Mono", monospace;
   color: var(--muted);
   font-weight: bold;
   margin-bottom: 0.75rem;
@@ -237,7 +256,6 @@ main {
 
 /* --- Dashboard --- */
 .price-banner {
-  font-family: "IBM Plex Mono", monospace;
   text-align: right;
   font-size: 0.85rem;
   font-weight: bold;
@@ -363,7 +381,6 @@ main {
 .addr-resolve-hint {
   display: block;
   font-size: 0.75rem;
-  font-family: "IBM Plex Mono", monospace;
   color: var(--muted);
   margin: 0.2rem 0 0.4rem;
   word-break: break-all;
@@ -430,9 +447,9 @@ main {
   display: flex;
   justify-content: space-between;
   gap: 1rem;
-  font-family: "IBM Plex Mono", monospace;
   font-size: 0.78rem;
   padding: 0.15rem 0;
+  font-weight: 600;
 }
 
 .swap-card-row .k {
@@ -492,7 +509,6 @@ textarea {
   border: 1px solid var(--border);
   border-radius: 4px;
   color: var(--text);
-  font-family: "IBM Plex Mono", monospace;
   font-size: 0.85rem;
 }
 
@@ -555,7 +571,6 @@ button.busy:disabled {
   padding: 0.75rem;
   background: var(--bg);
   border-radius: 4px;
-  font-family: "IBM Plex Mono", monospace;
   font-size: 0.75rem;
   white-space: pre-wrap;
   word-break: break-all;
