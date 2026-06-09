@@ -36,5 +36,18 @@ export default defineConfig(({ mode }) => {
     optimizeDeps: {
       exclude: ["@nockbox/iris-wasm", "@nockchain/rose-wasm"],
     },
+    plugins: [
+      {
+        name: "wasm-mime",
+        configurePreviewServer(server) {
+          server.middlewares.use((req, res, next) => {
+            if (req.url?.includes(".wasm")) {
+              res.setHeader("Content-Type", "application/wasm");
+            }
+            next();
+          });
+        },
+      },
+    ],
   };
 });

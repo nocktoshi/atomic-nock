@@ -19,10 +19,12 @@ export function getKvStore(): KvStore {
     if (KV_URL) {
       instance = new CloudflareKvStore(KV_URL, KV_TOKEN || undefined);
     } else {
-      console.warn(
-        "⚠️  VITE_KV_URL not set — using in-memory storage (ephemeral, not durable). " +
-          "Set VITE_KV_URL to a Cloudflare KV worker for production."
-      );
+      if (import.meta.env.DEV) {
+        console.warn(
+          "⚠️  VITE_KV_URL not set — using in-memory storage (ephemeral, not durable). " +
+            "Set VITE_KV_URL to a Cloudflare KV worker for production."
+        );
+      }
       instance = new MemoryKvStore();
     }
   }
