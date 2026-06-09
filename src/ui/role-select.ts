@@ -3,8 +3,6 @@ import type { SwapPublic } from "../swap.js";
 import type { Role } from "../app/roles.js";
 import { roleForSwap, swapStatus, refundAvailability } from "../app/roles.js";
 import { getSwapRepository } from "../app/repo/swap-repo.js";
-import { connectIrisWallet } from "../nock/wallet.js";
-import { connectEvmWallet } from "../evm/wallet.js";
 import { createPriceProvider } from "../market/price.js";
 import { buildSellerWizard } from "./seller-wizard.js";
 import { buildBuyerWizard } from "./buyer-wizard.js";
@@ -13,7 +11,8 @@ import { refundUsdcAction } from "../actions/buyer.js";
 import { refundNockAction } from "../actions/seller.js";
 import { getHiddenSwaps, hideSwap } from "../app/hidden-swaps.js";
 import { el, runBusy } from "./dom.js";
-import { log, logErr, setWalletStatus } from "./log.js";
+import { log, logErr } from "./log.js";
+
 
 const price = createPriceProvider();
 
@@ -22,13 +21,8 @@ export function renderDashboard(app: HTMLElement, session: SwapSession): void {
   const repo = getSwapRepository();
 
   const priceBanner = el("div", { class: "price-banner", text: "" });
-  const irisStatus = el("span", { class: "wallet-status", text: "Iris: not connected" });
-  const evmStatus = el("span", { class: "wallet-status", text: "MetaMask: not connected" });
   const swapsBox = el("div", { class: "swaps-box" });
   const dashLog = el("div", { class: "log", text: "Welcome to Atomic Nock. Ready to swap." });
-
-  if (session.nock) setWalletStatus(irisStatus, "iris", true, session.nock.pkh.slice(0, 16) + "…");
-  if (session.evm) setWalletStatus(evmStatus, "evm", true, session.evm);
 
   void loadPrice();
 
@@ -128,23 +122,6 @@ export function renderDashboard(app: HTMLElement, session: SwapSession): void {
     }
   }
 
-  // --- connect controls ---
-  const irisBtn = el("button", { type: "button", text: "Connect Iris" });
-  irisBtn.onclick = () =>
-    runBusy(irisBtn, async () => {
-      session.nock = await connectIrisWallet();
-      setWalletStatus(irisStatus, "iris", true, session.nock.pkh.slice(0, 16) + "…");
-      await refreshSwaps();
-    }).catch((e) => logErr(dashLog, e));
-
-  const evmBtn = el("button", { type: "button", text: "Connect MetaMask" });
-  evmBtn.onclick = () =>
-    runBusy(evmBtn, async () => {
-      session.evm = await connectEvmWallet();
-      setWalletStatus(evmStatus, "evm", true, session.evm);
-      await refreshSwaps();
-    }).catch((e) => logErr(dashLog, e));
-
   // --- lookup by id ---
   const lookupInput = el("input", { placeholder: "Swap ID (0x…) from the seller" });
   const lookupBtn = el("button", { type: "button", text: "Open swap" });
@@ -170,8 +147,6 @@ export function renderDashboard(app: HTMLElement, session: SwapSession): void {
   const panel = el("section", { class: "panel" }, [
     el("h2", { class: "flow-title", text: "Your swaps" }),
     priceBanner,
-    el("div", { class: "wallet-row" }, [irisBtn, irisStatus]),
-    el("div", { class: "wallet-row" }, [evmBtn, evmStatus]),
     dashLog,
     swapsBox,
     el("label", { text: "Open a swap by ID" }),

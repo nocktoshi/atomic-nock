@@ -169,6 +169,72 @@ main {
   flex: 1;
 }
 
+/* --- Wallet bar (above panel, right-aligned, stacked vertically) --- */
+.wallet-bar-wrap {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 0.4rem;
+  margin-bottom: 0.75rem;
+}
+
+/* --- Wallet connect buttons --- */
+.wallet-btns-row {
+  display: flex;
+  gap: 0.6rem;
+  flex-wrap: wrap;
+  margin-bottom: 0.75rem;
+}
+
+.wallet-connect-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  margin-top: 0;
+  padding: 0.5rem 1rem;
+  border: none;
+  border-radius: 999px;
+  font-size: 0.85rem;
+  font-weight: 700;
+  cursor: pointer;
+  color: var(--text);
+  background: linear-gradient(135deg, var(--card), var(--warn));
+  transition: opacity 0.15s ease, transform 0.08s ease;
+  white-space: nowrap;
+}
+
+.wallet-connect-btn:hover {
+  opacity: 0.88;
+  background: linear-gradient(135deg, var(--card), var(--warn));
+}
+
+.wallet-connect-btn:active {
+  transform: translateY(1px);
+}
+
+.wallet-connect-btn.busy,
+.wallet-connect-btn.busy:disabled {
+  animation: pulse-busy 1.1s ease-in-out infinite;
+  cursor: progress;
+}
+
+.wallet-connect-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.wallet-btn-icon {
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+  color: #fff;
+}
+
+.wallet-btn-icon svg {
+  width: 18px;
+  height: 18px;
+}
+
 /* --- Dashboard --- */
 .price-banner {
   font-family: "IBM Plex Mono", monospace;

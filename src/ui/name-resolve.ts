@@ -64,7 +64,7 @@ export async function resolveAddress(input: string): Promise<ResolvedAddress> {
 }
 
 /**
- * Reverse-resolve an address to a friendly name, if one exists.
+ * Reverse-resolve a Nockchain address to a .nock name, if one exists.
  * Returns the address itself if no name is found (never throws).
  */
 export async function reverseResolveNock(address: string): Promise<string> {
@@ -73,6 +73,19 @@ export async function reverseResolveNock(address: string): Promise<string> {
     if (!res.ok) return address;
     const json = await res.json() as { name?: string };
     return json.name ?? address;
+  } catch {
+    return address;
+  }
+}
+
+/**
+ * Reverse-resolve an Ethereum address to an ENS name, if one exists.
+ * Returns the address itself if no name is found (never throws).
+ */
+export async function reverseResolveEns(address: string): Promise<string> {
+  try {
+    const name = await ensClient.getEnsName({ address: address as `0x${string}` });
+    return name ?? address;
   } catch {
     return address;
   }
