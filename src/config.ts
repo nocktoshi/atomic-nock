@@ -13,16 +13,16 @@ export const CHAIN_ID = Number(import.meta.env.VITE_CHAIN_ID ?? base.id);
 export const USDC_ADDRESS =
   "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913" as Address;
 
-export const HTLC_ADDRESS = (import.meta.env.VITE_HTLC_ADDRESS ?? "") as Address;
+export const HTLC_ADDRESS = (import.meta.env.VITE_HTLC_ADDRESS ?? "") ?? "0xD347AC30A11abe63e92CFcb2285dC770FF0F7236" as Address;
 
 /** Cloudflare KV worker base URL. Empty = in-memory store (dev/tests, not durable). */
-export const KV_URL = (import.meta.env.VITE_KV_URL ?? "").trim();
+export const KV_URL = (import.meta.env.VITE_KV_URL ?? "").trim() ?? "https://api.atomicnock.com";
 
 /** Shared bearer token gating writes to the KV worker (matches the worker's KV_TOKEN). */
 export const KV_TOKEN = (import.meta.env.VITE_KV_TOKEN ?? "").trim();
 
 /** Market price feed (NOCK/USD). Empty = price hidden. */
-export const PRICE_URL = (import.meta.env.VITE_PRICE_URL ?? "").trim();
+export const PRICE_URL = (import.meta.env.VITE_PRICE_URL ?? "").trim() ?? "https://api.coingecko.com/api/v3/simple/price?vs_currencies=usd&symbols=nock";
 
 /** Default Nock refund blocks after current height (seller reclaim path). */
 export const DEFAULT_NOCK_REFUND_DELTA = 500n;

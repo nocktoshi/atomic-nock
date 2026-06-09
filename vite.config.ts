@@ -1,7 +1,7 @@
 import { defineConfig, loadEnv } from "vite";
 
 export default defineConfig(({ mode }) => {
-  const env = loadEnv(mode, "..", "");
+  const env = loadEnv(mode, ".", "");
   const upstream =
     env.VITE_NOCK_GRPC_UPSTREAM ?? "https://rpc.nockchain.net";
 
