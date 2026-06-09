@@ -13,7 +13,8 @@ export const CHAIN_ID = Number(import.meta.env.VITE_CHAIN_ID ?? base.id);
 export const USDC_ADDRESS =
   "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913" as Address;
 
-export const HTLC_ADDRESS = (import.meta.env.VITE_HTLC_ADDRESS ?? "") ?? "0xD347AC30A11abe63e92CFcb2285dC770FF0F7236" as Address;
+export const HTLC_ADDRESS = (import.meta.env.VITE_HTLC_ADDRESS ??
+  "0xD347AC30A11abe63e92CFcb2285dC770FF0F7236") as Address;
 
 /** Cloudflare KV worker base URL. Empty = in-memory store (dev/tests, not durable). */
 export const KV_URL = (import.meta.env.VITE_KV_URL ?? "").trim() ?? "https://api.atomicnock.com";
