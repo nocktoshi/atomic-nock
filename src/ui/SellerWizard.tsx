@@ -40,7 +40,9 @@ interface SellerCtx {
   evm: Address | null;
   repo: SwapRepository;
   log: LogApi["log"];
+  logErr: LogApi["logErr"];
   lockNockAction: SessionValue["lockNockAction"];
+  consolidateNotes: SessionValue["consolidateNotes"];
 }
 
 function stepForSwap(swap: DraftSwap): number {
@@ -114,7 +116,7 @@ function GenerateBody({ swap, setSwap }: SellerCtx) {
   );
 }
 
-function LockBody({ swap }: SellerCtx) {
+function LockBody({ swap, nock, log, logErr, consolidateNotes }: SellerCtx) {
   const giftNock =
     swap?.nockGift != null ? Number(swap.nockGift) / NICKS_PER_NOCK : NaN;
   const usdcNum = parseFloat(swap?.usdcAmount ?? "");
@@ -125,6 +127,30 @@ function LockBody({ swap }: SellerCtx) {
   const sellLabel = swap?.nockGift != null ? `${nicksToNock(swap.nockGift)} NOCK` : "—";
   const receiveLabel = Number.isFinite(usdcNum) ? `$${usdcNum.toFixed(2)}` : "—";
   const buyer = useResolvedNock(swap?.buyerPkh, short(swap?.buyerPkh, 8, 6));
+
+  const [consolidating, setConsolidating] = useState(false);
+  async function onConsolidate(): Promise<void> {
+    if (consolidating) return;
+    const walletAddress = nock?.address ?? nock?.pkh;
+    if (!walletAddress) {
+      logErr(new Error("Connect Iris (Nockchain wallet) to consolidate notes."));
+      return;
+    }
+    setConsolidating(true);
+    try {
+      const { txId, noteCount, totalNicks } = await consolidateNotes(walletAddress);
+      const totalNock = Number(totalNicks) / NICKS_PER_NOCK;
+      log(
+        `Consolidated ${noteCount} notes into one (~${totalNock.toFixed(4)} NOCK before fee).\n` +
+          `tx: ${txId}\nWait for it to confirm on-chain, then press Lock NOCK.`,
+        true
+      );
+    } catch (e) {
+      logErr(e);
+    } finally {
+      setConsolidating(false);
+    }
+  }
 
   return (
     <div>
@@ -158,6 +184,20 @@ function LockBody({ swap }: SellerCtx) {
           fills in automatically once they claim, then you can lock.
         </p>
       )}
+      <div className="consolidate-row">
+        <button
+          type="button"
+          className={consolidating ? "busy" : undefined}
+          disabled={consolidating || !nock}
+          onClick={onConsolidate}
+        >
+          {consolidating ? "Consolidating…" : "Consolidate notes"}
+        </button>
+        <span className="addr-resolve-hint">
+          The lock spends one note. If you hold several small notes, merge them
+          into one first (a self-transfer).
+        </span>
+      </div>
       <p className="fee-disclaimer">
         Fee: a 0.5% protocol fee is deducted from the USDC withdrawal.
       </p>
@@ -340,7 +380,8 @@ export function SellerWizard({
   swap: DraftSwap;
   setSwap: Dispatch<SetStateAction<DraftSwap>>;
 }) {
-  const { nock, evm, lockNockAction, fetchCurrentBlockHeight } = useSession();
+  const { nock, evm, lockNockAction, consolidateNotes, fetchCurrentBlockHeight } =
+    useSession();
   const repo = useMemo(() => getSwapRepository(), []);
   const { state: logState, log, logErr } = useLog();
   const [index, setIndex] = useState(() => stepForSwap(swap));
@@ -384,7 +425,9 @@ export function SellerWizard({
     evm,
     repo,
     log,
+    logErr,
     lockNockAction,
+    consolidateNotes,
   };
 
   async function copyLink() {

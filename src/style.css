@@ -453,6 +453,17 @@ main {
   border-radius: 16px;
 }
 
+.consolidate-row {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  margin-top: 0.75rem;
+}
+
+.consolidate-row button {
+  align-self: flex-start;
+}
+
 /* --- Swap summary card (click to copy) --- */
 .swap-card {
   position: relative;

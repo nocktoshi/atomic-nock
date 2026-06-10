@@ -10,6 +10,76 @@ import { signAndSendIrisTx, type NockWalletSession } from "./wallet.js";
 import { fetchWalletNotes, pickLargestNote } from "./balance.js";
 import { runStep } from "../grpc.js";
 
+export interface ConsolidateResult {
+  txId: string;
+  /** Number of input notes merged. */
+  noteCount: number;
+  /** Total NOCK value (in nicks) swept into the consolidated note (pre-fee). */
+  totalNicks: bigint;
+}
+
+/**
+ * Merge every note in the wallet into a single note via a self-transfer.
+ *
+ * The HTLC lock spends ONE input note (see {@link lockNock}), so a wallet holding
+ * many small notes can't fund a lock even if the total is sufficient. This sweeps
+ * all notes back to the seller's own address: a 1-nick output goes to the wallet
+ * and the remainder (total − fee) lands in the refund/change note — one note ≥ the
+ * total minus the network fee. `signAndSendIrisTx` calls `recalcAndSetFee`, which
+ * sizes the fee and balances that refund, so no fee estimate is needed here.
+ */
+export async function consolidateNotes(
+  wallet: NockWalletSession,
+  params: { walletAddress: Digest }
+): Promise<ConsolidateResult> {
+  const sellerPkh = params.walletAddress;
+
+  const { notes, query } = await runStep("Fetch wallet balance", () =>
+    fetchWalletNotes(wallet, params.walletAddress)
+  );
+  if (notes.length < 2) {
+    throw new Error(
+      `Nothing to consolidate — wallet has ${notes.length} note(s) at ${query}. ` +
+        `Consolidation needs at least 2 notes.`
+    );
+  }
+  const totalNicks = notes.reduce((sum, n) => sum + n.assets, 0n);
+
+  return runStep(`Consolidate ${notes.length} notes`, async () => {
+    await initIrisWasm();
+    const Iris = await getIrisWasm();
+
+    const settings = Iris.txEngineSettingsV1BythosDefault();
+    if (BigInt(settings.cost_per_word) !== DEFAULT_FEE_PER_WORD) {
+      settings.cost_per_word = String(DEFAULT_FEE_PER_WORD) as typeof settings.cost_per_word;
+    }
+    const builder = new Iris.TxBuilder(settings);
+
+    // Every input note is p2pkh-locked to this wallet.
+    const inputLock = Iris.lockFromList([
+      Iris.spendConditionNewPkh(Iris.pkhSingle(sellerPkh as never)),
+    ]) as Lock;
+    const inputNotes = notes.map((n) => n.note);
+    const txLocks = inputNotes.map(() => ({ lock: inputLock, lock_sp_index: 0 }));
+
+    // Self-transfer: recipient and refund are both our own address, so the whole
+    // balance stays in-wallet. gift = 1 nick (dust to self); the bulk lands in the
+    // refund/change note, which recalcAndSetFee balances to (total − fee).
+    builder.simpleSpend(
+      inputNotes,
+      txLocks as never,
+      sellerPkh as never, // recipient
+      "1" as never, // gift (dust)
+      undefined, // fee_override — recalcAndSetFee computes it
+      sellerPkh as never, // refund → the consolidated note
+      false
+    );
+
+    const txId = await signAndSendIrisTx(wallet, builder, inputNotes);
+    return { txId, noteCount: notes.length, totalNicks };
+  });
+}
+
 export interface LockNockResult {
   txId: string;
   lockFirstName: Digest;

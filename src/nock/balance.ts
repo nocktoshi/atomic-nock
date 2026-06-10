@@ -111,10 +111,21 @@ export function pickLargestNote(
     .sort((a, b) => (a.assets > b.assets ? -1 : a.assets < b.assets ? 1 : 0));
 
   if (ranked.length === 0) {
-    const need = Number(minAssetsNicks) / Number(NICKS_PER_NOCK);
-    throw new Error(
-      `No note with at least ${need} NOCK. Fund the wallet or lower the gift amount.`
-    );
+    // The lock spends a SINGLE note, so the constraint is "one note >= gift",
+    // not "total balance >= gift". Report largest + total so the user can tell
+    // whether they're underfunded or just holding fragmented notes.
+    const fmt = (n: bigint) => parseFloat((Number(n) / Number(NICKS_PER_NOCK)).toFixed(4));
+    const need = fmt(minAssetsNicks);
+    const total = entries.reduce((s, c) => s + c.assets, 0n);
+    const largest = entries.reduce((m, c) => (c.assets > m ? c.assets : m), 0n);
+    const detail =
+      total >= minAssetsNicks
+        ? `Your largest single note is ${fmt(largest)} NOCK, but you hold ${fmt(total)} NOCK ` +
+          `across ${entries.length} note(s). The lock spends one note, so consolidate your notes ` +
+          `into a single note of at least ${need} NOCK (or lower the gift amount).`
+        : `You hold ${fmt(total)} NOCK total across ${entries.length} note(s) — less than the ` +
+          `${need} NOCK needed. Fund the wallet or lower the gift amount.`;
+    throw new Error(`No note with at least ${need} NOCK. ${detail}`);
   }
 
   return { note: ranked[0].note, assets: ranked[0].assets.toString() as Nicks };
