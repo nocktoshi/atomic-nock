@@ -1,6 +1,8 @@
 import type { Hex, Address } from "viem";
-import type { SwapPublic } from "../swap.js";
-import type { TokenKey } from "../config.js";
+import { type SwapPublic, assertPreimageMatchesHNock } from "../swap.js";
+import { type TokenKey, tokenInfo } from "../config.js";
+import { approveAndLock, usdcToAtomic, computeSwapId, refundUsdc } from "../evm/htlc.js";
+import { getPreimageFromWithdrawTx, findPreimageFromSwapWithdraw } from "../evm/preimage.js";
 import type { Digest, Nicks } from "@nockbox/iris-sdk/wasm";
 
 
@@ -27,11 +29,7 @@ export interface LockUsdcDeps {
   htlcAddressSet(token?: TokenKey): boolean;
 }
 
-async function defaultLockUsdcDeps(): Promise<LockUsdcDeps> {
-  const [{ approveAndLock }, { tokenInfo }] = await Promise.all([
-    import("../evm/htlc.js"),
-    import("../config.js"),
-  ]);
+function defaultLockUsdcDeps(): LockUsdcDeps {
   return { approveAndLock, htlcAddressSet: (token) => Boolean(tokenInfo(token).htlc) };
 }
 
@@ -39,7 +37,7 @@ export async function lockUsdcAction(
   input: { swap: SwapPublic },
   deps?: LockUsdcDeps
 ): Promise<{ swapId: Hex; lockTxHash: Hex; swap: SwapPublic }> {
-  const d = deps ?? (await defaultLockUsdcDeps());
+  const d = deps ?? defaultLockUsdcDeps();
   if (!d.htlcAddressSet(input.swap.token)) {
     throw new Error(
       input.swap.token === "WNOCK"
@@ -77,9 +75,7 @@ export interface PreimageDeps {
   assertPreimageMatchesHNock(jam: Uint8Array, hNock: Digest): Promise<void>;
 }
 
-async function defaultPreimageDeps(): Promise<PreimageDeps> {
-  const [{ getPreimageFromWithdrawTx, findPreimageFromSwapWithdraw }, { assertPreimageMatchesHNock }] =
-    await Promise.all([import("../evm/preimage.js"), import("../swap.js")]);
+function defaultPreimageDeps(): PreimageDeps {
   return {
     getPreimageFromWithdrawTx,
     findPreimageFromSwapWithdraw,
@@ -103,7 +99,7 @@ export async function resolvePreimage(
 ): Promise<ResolvedPreimage> {
   if (input.cached) return { preimageJam: input.cached };
 
-  const d = deps ?? (await defaultPreimageDeps());
+  const d = deps ?? defaultPreimageDeps();
 
   // Prefer an explicit manual tx, then the swap's recorded Base withdraw tx (set by
   // the seller on withdraw and shared via the swap record) — this is the auto-load
@@ -149,8 +145,7 @@ export interface ClaimDeps {
   assertPreimageMatchesHNock(jam: Uint8Array, hNock: Digest): Promise<void>;
 }
 
-async function defaultClaimDeps(): Promise<ClaimDeps> {
-  const { assertPreimageMatchesHNock } = await import("../swap.js");
+function defaultClaimDeps(): ClaimDeps {
   return {
     claimNock: async () => {
       throw new Error(
@@ -172,7 +167,7 @@ export async function claimNockAction(
 ): Promise<{ txId: string; swap: SwapPublic }> {
   if (!input.preimageJam) throw new Error("No preimage. Please load the swap.");
 
-  const d = deps ?? (await defaultClaimDeps());
+  const d = deps ?? defaultClaimDeps();
 
   await d.assertPreimageMatchesHNock(input.preimageJam, input.swap.hNock);
 
@@ -219,8 +214,7 @@ export interface RefundUsdcDeps {
   refundUsdc(swapId: Hex, token?: TokenKey): Promise<Hex>;
 }
 
-async function defaultRefundUsdcDeps(): Promise<RefundUsdcDeps> {
-  const { usdcToAtomic, computeSwapId, refundUsdc } = await import("../evm/htlc.js");
+function defaultRefundUsdcDeps(): RefundUsdcDeps {
   return { usdcToAtomic, computeSwapId, refundUsdc };
 }
 
@@ -233,7 +227,7 @@ export async function refundUsdcAction(
     throw new Error("Swap has no on-chain lock to refund");
   }
   if (!swap.usdcAmount) throw new Error("Swap is missing the quote amount");
-  const d = deps ?? (await defaultRefundUsdcDeps());
+  const d = deps ?? defaultRefundUsdcDeps();
 
   const amount = await d.usdcToAtomic(swap.usdcAmount, swap.token);
   const id = await d.computeSwapId(

@@ -1,7 +1,11 @@
 import type { Hex, Address } from "viem";
-import type { SwapPublic } from "../swap.js";
-import type { TokenKey } from "../config.js";
+import { type SwapPublic, generateSwapSecret, computeHashes } from "../swap.js";
+import { type TokenKey, DEFAULT_NOCK_REFUND_DELTA, DEFAULT_USDC_TIMEOUT_SEC } from "../config.js";
 import type { LockNockResult, LockNockPreview } from "../nock/lock.js";
+import { isPlausibleWalletAddress } from "../nock/balance.js";
+import { assertBase58Digest } from "../nock/tx.js";
+import { usdcToAtomic, computeSwapId, withdrawUsdc } from "../evm/htlc.js";
+import { secretStore } from "../app/storage/secret-store.js";
 
 type LockNockFull = LockNockResult & { preview: LockNockPreview };
 import type { Digest } from "@nockbox/iris-sdk/wasm";
@@ -25,18 +29,7 @@ export interface GenerateSwapDeps {
   usdcTimeoutSec: number;
 }
 
-async function defaultGenerateSwapDeps(): Promise<GenerateSwapDeps> {
-  const [
-    { generateSwapSecret, computeHashes },
-    { isPlausibleWalletAddress },
-    { assertBase58Digest },
-    { DEFAULT_NOCK_REFUND_DELTA, DEFAULT_USDC_TIMEOUT_SEC },
-  ] = await Promise.all([
-    import("../swap.js"),
-    import("../nock/balance.js"),
-    import("../nock/tx.js"),
-    import("../config.js"),
-  ]);
+function defaultGenerateSwapDeps(): GenerateSwapDeps {
   return {
     generateSwapSecret,
     computeHashes,
@@ -61,7 +54,7 @@ export async function generateSwapAction(
   },
   deps?: GenerateSwapDeps
 ): Promise<{ swap: SwapPublic; preimageJam: Uint8Array; refundHeight: bigint }> {
-  const d = deps ?? (await defaultGenerateSwapDeps());
+  const d = deps ?? defaultGenerateSwapDeps();
 
   // buyerPkh is optional: an OPEN swap is posted with no buyer and the buyer
   // commits later via the shared link (their pkh is set from their session).
@@ -125,8 +118,7 @@ export interface LockNockDeps {
   }): Promise<LockNockFull>;
 }
 
-async function defaultLockNockDeps(): Promise<LockNockDeps> {
-  const { isPlausibleWalletAddress } = await import("../nock/balance.js");
+function defaultLockNockDeps(): LockNockDeps {
   return {
     isPlausibleWalletAddress,
     lockNock: async () => {
@@ -145,7 +137,7 @@ export async function lockNockAction(
   deps?: LockNockDeps
 ): Promise<{ result: LockNockFull; swap: SwapPublic }> {
   if (!input.swap) throw new Error("Generate swap first");
-  const d = deps ?? (await defaultLockNockDeps());
+  const d = deps ?? defaultLockNockDeps();
 
   const walletAddress = input.walletAddress.trim() as Digest;
   if (!d.isPlausibleWalletAddress(walletAddress)) {
@@ -200,12 +192,7 @@ export interface WithdrawUsdcDeps {
   }): Promise<Hex>;
 }
 
-async function defaultWithdrawUsdcDeps(): Promise<WithdrawUsdcDeps> {
-  const [{ usdcToAtomic, computeSwapId, withdrawUsdc }, { secretStore }] =
-    await Promise.all([
-      import("../evm/htlc.js"),
-      import("../app/storage/secret-store.js"),
-    ]);
+function defaultWithdrawUsdcDeps(): WithdrawUsdcDeps {
   return {
     usdcToAtomic,
     computeSwapId,
@@ -224,7 +211,7 @@ export async function withdrawUsdcAction(
     throw new Error("Buyer must lock USDC before you can withdraw");
   }
   if (!swap.usdcAmount) throw new Error("Swap is missing the quote amount");
-  const d = deps ?? (await defaultWithdrawUsdcDeps());
+  const d = deps ?? defaultWithdrawUsdcDeps();
 
   const amount = await d.usdcToAtomic(swap.usdcAmount, swap.token);
   const id = await d.computeSwapId(

@@ -46,8 +46,9 @@ export async function enableBrowserPush(): Promise<void> {
   if (permission !== "granted") {
     throw new Error("Notification permission was not granted.");
   }
-  const reg = await registerServiceWorker();
-  if (!reg) throw new Error("Service worker failed to register.");
+
+  await registerServiceWorker();
+  const reg = await navigator.serviceWorker.ready;
   const sub =
     (await reg.pushManager.getSubscription()) ??
     (await reg.pushManager.subscribe({
@@ -59,7 +60,7 @@ export async function enableBrowserPush(): Promise<void> {
 
 /** Unsubscribe this browser and remove it from the profile. */
 export async function disableBrowserPush(): Promise<void> {
-  const reg = await navigator.serviceWorker.getRegistration();
+  const reg = await navigator.serviceWorker.ready.catch(() => null);
   const sub = await reg?.pushManager.getSubscription();
   if (sub) {
     const endpoint = sub.endpoint;
@@ -71,6 +72,10 @@ export async function disableBrowserPush(): Promise<void> {
 /** Is THIS browser currently subscribed? (profile may list other browsers too) */
 export async function isBrowserSubscribed(): Promise<boolean> {
   if (!pushSupported()) return false;
-  const reg = await navigator.serviceWorker.getRegistration();
-  return Boolean(await reg?.pushManager.getSubscription());
+  try {
+    const reg = await navigator.serviceWorker.ready;
+    return Boolean(await reg.pushManager.getSubscription());
+  } catch {
+    return false;
+  }
 }
