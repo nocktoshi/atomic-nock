@@ -126,8 +126,7 @@ function LockBody({ swap, lockCheck }: BuyerCtx) {
         </p>
       )}
       <p className="fee-disclaimer">
-        Fee: a 0.5% protocol fee is paid by the seller (deducted from their USDC
-        withdrawal). You lock and receive exactly the amounts shown.
+        Fee: a 0.5% protocol fee is paid by the seller.
       </p>
     </div>
   );
@@ -161,13 +160,25 @@ function PreimageBody({
 }
 
 function ClaimNockBody({ swap, preimageReady, preimageLen, hasWithdraw }: BuyerCtx) {
+  const seller = useResolvedNock(swap?.sellerPkh, short(swap?.sellerPkh, 8, 6));
+  const giftNock = swap?.nockGift != null ? nicksToNock(swap.nockGift) : "—";
   return (
     <div>
-      <p className="hint">
-        {swap?.lockFirstName
-          ? "Ready to claim the locked NOCK with the revealed preimage."
-          : "Waiting for the seller to lock NOCK (lockFirstName not set yet)."}
-      </p>
+      <div className="swap-order-summary">
+        <div className="swap-card-row">
+          <span className="k">From</span>
+          <span className="v" title={seller.title ?? swap?.sellerPkh}>
+            {swap?.lockFirstName ? seller.text : "—"}
+          </span>
+        </div>
+        <div className="swap-card-row">
+          <span className="k">Amount</span>
+          <span className="v">{giftNock} NOCK</span>
+        </div>
+      </div>
+      {!swap?.lockFirstName && (
+        <p className="hint">Waiting for the seller to lock NOCK on Nockchain.</p>
+      )}
       <p className={"preimage-status" + (preimageReady ? " ok" : "")}>
         {preimageReady
           ? `Preimage ready (${preimageLen} bytes).`
@@ -179,10 +190,23 @@ function ClaimNockBody({ swap, preimageReady, preimageLen, hasWithdraw }: BuyerC
   );
 }
 
-function DoneBody() {
+function DoneBody({ swap }: BuyerCtx) {
+  const giftNock = swap?.nockGift != null ? nicksToNock(swap.nockGift) : "—";
   return (
     <div>
-      <p>🎉🎉 Swap complete. 🎉🎉</p>
+      <p className="swap-complete-heading">🎉🎉 Swap complete. 🎉🎉</p>
+      <div className="swap-order-summary">
+        <div className="swap-card-row">
+          <span className="k">Amount received</span>
+          <span className="v">{giftNock} NOCK</span>
+        </div>
+        {swap?.nockClaimTxId && (
+          <div className="swap-card-row">
+            <span className="k">Transaction</span>
+            <span className="v">{swap.nockClaimTxId}</span>
+          </div>
+        )}
+      </div>
     </div>
   );
 }
@@ -404,11 +428,8 @@ export function BuyerWizard({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [stepId, swap]);
 
-  // Terminal step logs completion.
-  useEffect(() => {
-    if (stepId === "done") log("Swap complete — NOCK claimed.", true);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [stepId]);
+  // The "done" step shows the completion summary (amount + tx id) in DoneBody;
+  // the claim log line (with the broadcast tx id) is left intact, not overwritten.
 
   // Guard: both wallets must be connected before the form is useful.
   if (!nock || !evm) {

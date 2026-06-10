@@ -193,17 +193,47 @@ function WithdrawBody({ swap }: SellerCtx) {
       </div>
       <p className="fee-disclaimer">
         {swap?.usdcLockTxHash
-          ? `Buyer locked ${swap.usdcAmount ?? "?"} USDC. Withdraw reveals the preimage on Base; the buyer then claim NOCK.`
+          ? `Buyer locked ${swap.usdcAmount ?? "?"} USDC. Time to claim!`
           : "Waiting for the buyer to lock USDC on Base."}
       </p>
     </div>
   );
 }
 
-function DoneBody() {
+function DoneBody({ swap }: SellerCtx) {
+  const giftNock =
+    swap?.nockGift != null ? Number(swap.nockGift) / NICKS_PER_NOCK : NaN;
+  const usdcNum = parseFloat(swap?.usdcAmount ?? "");
+  const pricePerNock =
+    Number.isFinite(giftNock) && giftNock > 0 && Number.isFinite(usdcNum) && usdcNum > 0
+      ? usdcNum / giftNock
+      : null;
+  const amountLabel = swap?.nockGift != null ? `${nicksToNock(swap.nockGift)} NOCK` : "—";
+  const buyer = useResolvedNock(swap?.buyerPkh, short(swap?.buyerPkh, 8, 6));
+
   return (
     <div>
-      <p>Swap complete — USDC withdrawn and preimage revealed on Base.</p>
+      <p className="swap-complete-heading">🎉🎉 Swap complete. 🎉🎉</p>
+      <div className="swap-order-summary">
+        <div className="swap-card-row">
+          <span className="k">Amount</span>
+          <span className="v">{amountLabel}</span>
+        </div>
+        {pricePerNock != null && (
+          <div className="swap-card-row">
+            <span className="k">Price</span>
+            <span className="v">${pricePerNock.toFixed(4)} / NOCK</span>
+          </div>
+        )}
+        {swap?.buyerPkh && (
+          <div className="swap-card-row">
+            <span className="k">Buyer</span>
+            <span className="v" title={buyer.title ?? swap.buyerPkh}>
+              {buyer.text}
+            </span>
+          </div>
+        )}
+      </div>
     </div>
   );
 }
