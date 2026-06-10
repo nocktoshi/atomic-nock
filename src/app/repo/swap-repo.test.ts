@@ -38,16 +38,14 @@ describe("SwapRepository", () => {
     expect(got?.usdcAmount).toBe("1.0");
   });
 
-  it("indexes by every participant address", async () => {
+  it("indexes by every participant nock pkh", async () => {
     const repo = makeRepo();
     const swap = makeSwap();
     await repo.create(swap);
 
-    expect((await repo.listForAddress("0xSELLERETH")).map((s) => s.hEvm)).toEqual(["0xAbC123"]);
-    expect((await repo.listForAddress("0xbuyereth")).length).toBe(1);
-    expect((await repo.listForNockPkh("SELLER_PKH")).length).toBe(1);
+    expect((await repo.listForNockPkh("SELLER_PKH")).map((s) => s.hEvm)).toEqual(["0xAbC123"]);
     expect((await repo.listForNockPkh("BUYER_PKH")).length).toBe(1);
-    expect((await repo.listForAddress("0xnobody")).length).toBe(0);
+    expect((await repo.listForNockPkh("NOBODY_PKH")).length).toBe(0);
   });
 
   it("keeps multiple swaps separate (no collision)", async () => {

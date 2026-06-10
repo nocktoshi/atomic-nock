@@ -9,7 +9,6 @@ import { getSwapApi, type SwapApi } from "./swap-api.js";
 import { getActiveWallet } from "../auth.js";
 import { progressFields } from "../swap-fields.js";
 
-const ETH_IDX = "idx:eth:";
 const NOCK_IDX = "idx:nock:";
 
 /** Encoded (string-bigint) form of a swap, as stored/transported. */
@@ -26,9 +25,9 @@ function roleFor(swap: DraftSwap): "seller" | "buyer" {
 }
 
 /**
- * Persistence for swap metadata, keyed by `hEvm` (the swap id). Maintains
- * prefix-based secondary indexes so swaps can be listed by any participant
- * address — both legs of every party (seller/buyer × eth/nock).
+ * Persistence for swap metadata, keyed by `hEvm` (the swap id). Listing goes
+ * through the authenticated, server-scoped `idx:nock:<pkh>:` index, which covers
+ * every swap you're part of (as buyer or seller); the eth index is not listable.
  *
  * One `put` replaces all the old scattered localStorage `save*Json` calls.
  */
@@ -58,10 +57,6 @@ export class SwapRepository {
     if (!swap.hEvm) throw new Error("swap has no id yet");
     const role = roleFor(swap);
     await this.api.advance(swap.hEvm, progressFields(encoded(swap), role));
-  }
-
-  listForAddress(addr: string): Promise<SwapPublic[]> {
-    return this.listByPrefix(`${ETH_IDX}${addr.toLowerCase()}:`);
   }
 
   listForNockPkh(pkh: string): Promise<SwapPublic[]> {
