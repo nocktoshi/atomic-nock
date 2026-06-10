@@ -92,28 +92,33 @@ export async function consolidateNotes(
     );
     builder.recalcAndSetFee(false);
 
-    // SAFETY: never sign a transaction that doesn't conserve value. Sum the built
-    // outputs and require inputs == outputs + a sane fee. This catches malformed
-    // multi-input txs (e.g. only one note's value landing in the outputs) BEFORE
-    // anything is signed or broadcast — no funds can be burned by a build bug.
+    // SAFETY: never sign a transaction that doesn't conserve value. A valid tx
+    // satisfies inputs == outputs + declaredFee, so (inputs − outputs) must equal
+    // the fee the tx itself declares. If more than that is missing, value is being
+    // burned by a build bug (e.g. only one note's value reaching the outputs) — we
+    // refuse BEFORE signing. This is fee-magnitude-independent: any honest fee,
+    // however large, passes; only a gap beyond the declared fee fails.
     const checkTx = builder.build();
-    const checkOuts = Iris.rawTxV1Outputs(
-      Iris.nockchainTxToRawTx(checkTx),
-      0,
-      settings
-    );
+    const checkRaw = Iris.nockchainTxToRawTx(checkTx);
+    const checkOuts = Iris.rawTxV1Outputs(checkRaw, 0, settings);
     const outSum = checkOuts.reduce(
       (s, o) => s + BigInt(o.assets as string | number | bigint),
       0n
     );
-    const feePaid = totalNicks - outSum; // inputs − outputs = fee
-    const maxFee = nicks(5n + BigInt(notes.length) * 3n);
-    if (outSum > totalNicks || feePaid < 0n || feePaid > maxFee) {
+    const declaredFee = BigInt(Iris.rawTxTotalFees(checkRaw));
+    const gap = totalNicks - outSum; // inputs − outputs; must equal declaredFee
+    const burnedBeyondFee = gap - declaredFee;
+    const TOLERANCE = 65536n; // 1 NOCK slack for rounding
+    if (
+      outSum > totalNicks ||
+      gap < 0n ||
+      burnedBeyondFee > TOLERANCE ||
+      burnedBeyondFee < -TOLERANCE
+    ) {
       throw new Error(
-        `Refusing to consolidate: transaction does not conserve value — ` +
-          `${fmt(outSum)} NOCK in outputs vs ${fmt(totalNicks)} NOCK in inputs ` +
-          `(${fmt(feePaid)} NOCK unaccounted, expected a fee under ${fmt(maxFee)} NOCK). ` +
-          `Not signing. Please report this — the consolidation tx is built incorrectly.`
+        `Refusing to consolidate: value not conserved — ${fmt(outSum)} NOCK out + ` +
+          `${fmt(declaredFee)} NOCK declared fee ≠ ${fmt(totalNicks)} NOCK in ` +
+          `(${fmt(burnedBeyondFee)} NOCK would be burned beyond the fee). Not signing.`
       );
     }
 
