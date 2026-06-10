@@ -75,11 +75,17 @@ export class SwapRepository {
   }
 
   private async listByPrefix(prefix: string): Promise<SwapPublic[]> {
-    // Listing is authenticated and server-scoped to the caller's own pkh.
     const keys = await this.api.listKeys(prefix);
-    const swaps = await Promise.all(
-      keys.map((k) => this.get(k.slice(prefix.length) as Hex))
-    );
+    // Fetch in small batches so a large swap list doesn't fire dozens of
+    // simultaneous requests and hit the read rate limit (60/min/IP).
+    const BATCH = 5;
+    const swaps: (SwapPublic | null)[] = [];
+    for (let i = 0; i < keys.length; i += BATCH) {
+      const results = await Promise.all(
+        keys.slice(i, i + BATCH).map((k) => this.get(k.slice(prefix.length) as Hex))
+      );
+      swaps.push(...results);
+    }
     return swaps.filter((s): s is SwapPublic => s !== null);
   }
 }

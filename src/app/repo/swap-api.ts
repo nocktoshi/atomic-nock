@@ -33,8 +33,15 @@ export interface SwapApi {
   cancel(hEvm: string): Promise<void>;
 }
 
+const CACHE_TTL_MS = 45_000;
+
 class HttpSwapApi implements SwapApi {
   constructor(private readonly baseUrl: string) {}
+
+  // Keyed by lowercase hEvm.
+  private readonly _cache = new Map<string, { rec: SwapRecord; exp: number }>();
+  // Deduplicate concurrent reads for the same key.
+  private readonly _inflight = new Map<string, Promise<SwapRecord | null>>();
 
   private async post(path: string, body: unknown): Promise<SwapRecord> {
     const token = await ensureSession(this.baseUrl);
@@ -53,7 +60,14 @@ class HttpSwapApi implements SwapApi {
       throw new Error(msg || `request failed (${res.status})`);
     }
     const json = (await res.json()) as { swap?: SwapRecord };
-    return json.swap ?? {};
+    const rec = json.swap ?? {};
+    // Cache the server's response so the next get() sees fresh data immediately.
+    if (rec.hEvm) {
+      const key = String(rec.hEvm).toLowerCase();
+      this._cache.set(key, { rec, exp: Date.now() + CACHE_TTL_MS });
+      this._inflight.delete(key);
+    }
+    return rec;
   }
 
   create(swap: Record<string, unknown>): Promise<SwapRecord> {
@@ -65,10 +79,25 @@ class HttpSwapApi implements SwapApi {
   advance(hEvm: string, fields: Record<string, unknown>): Promise<SwapRecord> {
     return this.post(`/swap/${encodeURIComponent(hEvm)}/advance`, { fields });
   }
+
   async get(hEvm: string): Promise<SwapRecord | null> {
-    // Open read — the worker serves the record at GET /swap/:id (bare id; it
-    // prepends the `swap:` key prefix itself). 404 means no such swap.
-    const res = await fetch(`${this.baseUrl}/swap/${encodeURIComponent(hEvm.toLowerCase())}`);
+    const key = hEvm.toLowerCase();
+
+    // Serve from cache while still fresh.
+    const hit = this._cache.get(key);
+    if (hit && Date.now() < hit.exp) return hit.rec;
+
+    // Deduplicate concurrent requests for the same key.
+    let p = this._inflight.get(key);
+    if (!p) {
+      p = this._fetchSwap(key).finally(() => this._inflight.delete(key));
+      this._inflight.set(key, p);
+    }
+    return p;
+  }
+
+  private async _fetchSwap(key: string): Promise<SwapRecord | null> {
+    const res = await fetch(`${this.baseUrl}/swap/${encodeURIComponent(key)}`);
     if (res.status === 404) return null;
     if (!res.ok) {
       let msg = "";
@@ -79,7 +108,9 @@ class HttpSwapApi implements SwapApi {
       }
       throw new Error(msg || `swap read failed (${res.status})`);
     }
-    return (await res.json()) as SwapRecord;
+    const rec = (await res.json()) as SwapRecord;
+    this._cache.set(key, { rec, exp: Date.now() + CACHE_TTL_MS });
+    return rec;
   }
   async listOpen(): Promise<SwapRecord[]> {
     // Public marketplace read — follow cursors up to a sane cap.

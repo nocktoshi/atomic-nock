@@ -1,4 +1,11 @@
 import { describe, it, expect, vi } from "vitest";
+
+// Both nock modules transitively load @nockbox/iris-wasm, which can't resolve
+// in the Node.js test environment. Mock them out — tests inject all deps
+// explicitly, so the real implementations are never called.
+vi.mock("../nock/balance.js", () => ({ isPlausibleWalletAddress: () => true }));
+vi.mock("../nock/tx.js", () => ({ assertBase58Digest: () => {} }));
+
 import type { Hex, Address } from "viem";
 import type { Digest } from "@nockbox/iris-sdk/wasm";
 import type { SwapPublic } from "../swap.js";

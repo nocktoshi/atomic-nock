@@ -13,6 +13,14 @@ import { ETH_RPC_URL } from "../config.js";
 
 const NOCKNAMES_API = "https://api.nocknames.com";
 
+// Session-scoped caches — NNS and ENS bindings are stable within a page load.
+// In-flight maps deduplicate concurrent requests for the same address (e.g. the
+// same seller appearing in multiple marketplace cards at once).
+const nockReverseCache = new Map<string, string>();
+const nockReverseInflight = new Map<string, Promise<string>>();
+const ensReverseCache = new Map<string, string>();
+const ensReverseInflight = new Map<string, Promise<string>>();
+
 // ENS lookups need a CORS-friendly mainnet RPC; retries off so a failed/no-ENS
 // lookup doesn't spam the console (callers fall back to the raw address).
 const ensClient = createPublicClient({
@@ -72,27 +80,61 @@ export async function resolveAddress(input: string): Promise<ResolvedAddress> {
 /**
  * Reverse-resolve a Nockchain address to a .nock name, if one exists.
  * Returns the address itself if no name is found (never throws).
+ * Results are cached for the session; concurrent calls for the same address
+ * share a single in-flight request.
  */
 export async function reverseResolveNock(address: string): Promise<string> {
-  try {
-    const res = await fetch(`${NOCKNAMES_API}/resolve?address=${encodeURIComponent(address.trim())}`);
-    if (!res.ok) return address;
-    const json = await res.json() as { name?: string };
-    return json.name ?? address;
-  } catch {
-    return address;
+  const key = address.trim();
+  const hit = nockReverseCache.get(key);
+  if (hit !== undefined) return hit;
+
+  let p = nockReverseInflight.get(key);
+  if (!p) {
+    p = (async () => {
+      try {
+        const res = await fetch(`${NOCKNAMES_API}/resolve?address=${encodeURIComponent(key)}`);
+        if (!res.ok) return key;
+        const json = (await res.json()) as { name?: string };
+        return json.name ?? key;
+      } catch {
+        return key;
+      }
+    })().then((name) => {
+      nockReverseCache.set(key, name);
+      return name;
+    });
+    nockReverseInflight.set(key, p);
+    p.finally(() => nockReverseInflight.delete(key));
   }
+  return p;
 }
 
 /**
  * Reverse-resolve an Ethereum address to an ENS name, if one exists.
  * Returns the address itself if no name is found (never throws).
+ * Results are cached for the session; concurrent calls for the same address
+ * share a single in-flight request.
  */
 export async function reverseResolveEns(address: string): Promise<string> {
-  try {
-    const name = await ensClient.getEnsName({ address: address as `0x${string}` });
-    return name ?? address;
-  } catch {
-    return address;
+  const key = (address as string).trim().toLowerCase();
+  const hit = ensReverseCache.get(key);
+  if (hit !== undefined) return hit;
+
+  let p = ensReverseInflight.get(key);
+  if (!p) {
+    p = (async () => {
+      try {
+        const name = await ensClient.getEnsName({ address: address as `0x${string}` });
+        return name ?? address;
+      } catch {
+        return address;
+      }
+    })().then((name) => {
+      ensReverseCache.set(key, name);
+      return name;
+    });
+    ensReverseInflight.set(key, p);
+    p.finally(() => ensReverseInflight.delete(key));
   }
+  return p;
 }
