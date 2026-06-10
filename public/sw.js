@@ -1,6 +1,11 @@
 /* Atomic Nock service worker — Web Push display + click-through.
  * Payload shape (see worker/src/notify.ts): { title, body, url } */
 
+// Activate immediately on install and claim all open tabs so pushManager.subscribe()
+// always finds an active, controlling service worker.
+self.addEventListener("install", () => self.skipWaiting());
+self.addEventListener("activate", (event) => event.waitUntil(self.clients.claim()));
+
 self.addEventListener("push", (event) => {
   let data = { title: "Atomic Nock", body: "Swap update", url: "/" };
   try {
