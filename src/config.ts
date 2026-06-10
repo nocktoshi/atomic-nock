@@ -65,7 +65,7 @@ export const KV_URL =
 
 /** VAPID public key for browser push (base64url). Empty = push hidden in the UI.
  *  Generate a pair with: npx web-push generate-vapid-keys */
-export const VAPID_PUBLIC_KEY = (import.meta.env.VITE_VAPID_PUBLIC_KEY ?? "BDCjukBFgMmy5W7a-yiyzxLf-CeHkRIrQIDoFb6ckjOT0XrYNmpO34qhTcAGnHsn8mQguhWgtEnZz0gXVcU93M8").trim();
+export const VAPID_PUBLIC_KEY = (import.meta.env.VITE_VAPID_PUBLIC_KEY ?? "").trim();
 
 /** Market price feed (NOCK/USD). Empty in dev = price hidden. */
 const priceFromEnv = (import.meta.env.VITE_PRICE_URL ?? "").trim();
