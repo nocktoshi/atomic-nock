@@ -203,9 +203,6 @@ export function Dashboard() {
         <button type="button" onClick={() => navigate("/market")}>
           Browse marketplace
         </button>
-        <button type="button" onClick={() => navigate("/settings")}>
-          Settings
-        </button>
       </div>
     </section>
   );

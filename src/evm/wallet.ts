@@ -1,6 +1,6 @@
 import type { Address } from "viem";
 import { connectWallet } from "./htlc.js";
-import { selectWallet } from "./providers.js";
+import { getProvider, selectWallet } from "./providers.js";
 
 let connected: Address | null = null;
 
@@ -24,4 +24,18 @@ export function requireEvmAddress(): Address {
 
 export function setEvmAddress(addr: Address | null): void {
   connected = addr;
+}
+
+/** Restore EVM connection silently (no popup) using eth_accounts. */
+export async function silentReconnect(): Promise<Address | null> {
+  try {
+    const accounts = (await getProvider().request({ method: "eth_accounts" })) as string[];
+    if (accounts[0]) {
+      connected = accounts[0] as Address;
+      return connected;
+    }
+  } catch {
+    // wallet unavailable or not connected
+  }
+  return null;
 }

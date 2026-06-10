@@ -254,6 +254,12 @@ main {
   height: 18px;
 }
 
+.wallet-btn-chevron {
+  font-size: 0.7rem;
+  opacity: 0.75;
+  margin-left: -0.1rem;
+}
+
 /* --- Multi-wallet picker (EIP-6963) --- */
 .wallet-picker {
   position: relative;
