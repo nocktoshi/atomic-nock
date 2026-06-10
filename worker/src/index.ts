@@ -16,7 +16,6 @@
  *   POST /swap/:id/claim                -> buyer commits to an open swap
  *   POST /swap/:id/advance              -> party writes their progress fields
  *   GET  /swap/:id                      -> swap record
- *   GET  /kv/:key                       -> raw read (back-compat for the client)
  *   GET  /list?prefix=...               -> { keys: string[] }
  */
 import {
@@ -141,30 +140,27 @@ export default {
       }
 
       if (path === "/list" && req.method === "GET") {
+        // Authenticated + scoped: you may only list your OWN swaps. Every
+        // participant is indexed by their nock pkh, so `idx:nock:<your pkh>:`
+        // covers every swap you're part of — and nothing else is listable.
+        const pkh = await requireSession(req, env);
         const prefix = url.searchParams.get("prefix") ?? "";
+        if (prefix !== `idx:nock:${pkh}:`) {
+          return json({ error: "may only list your own swaps" }, 403);
+        }
         const out: string[] = [];
         let cursor: string | undefined;
+        const MAX_KEYS = 1000;
         do {
           const page = await env.SWAPS.list({ prefix, cursor });
-          for (const k of page.keys) out.push(k.name);
-          cursor = page.list_complete ? undefined : page.cursor;
+          for (const k of page.keys) {
+            out.push(k.name);
+            if (out.length >= MAX_KEYS) break;
+          }
+          cursor = page.list_complete || out.length >= MAX_KEYS ? undefined : page.cursor;
         } while (cursor);
         return json({ keys: out });
       }
-
-      // Back-compat raw read so the existing client read path keeps working.
-      if (path.startsWith("/kv/") && req.method === "GET") {
-        const key = decodeURIComponent(path.slice("/kv/".length));
-        if (!key) return json({ error: "missing key" }, 400);
-        const value = await env.SWAPS.get(key);
-        if (value === null) {
-          return new Response("not found", { status: 404, headers: CORS });
-        }
-        return new Response(value, {
-          headers: { "content-type": "text/plain", ...CORS },
-        });
-      }
-
       return json({ error: "not found" }, 404);
     } catch (e) {
       return errorResponse(e);

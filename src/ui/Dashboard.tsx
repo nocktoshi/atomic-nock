@@ -25,16 +25,19 @@ export function Dashboard() {
   const [lookupBusy, setLookupBusy] = useState(false);
 
   const refreshSwaps = useCallback(async () => {
-    if (!nock && !evm) return;
-    const key = `${nock?.pkh ?? ""}:${evm ?? ""}`;
+    // Listing is authenticated and scoped to your own nock pkh (which indexes
+    // every swap you participate in), so it needs the Iris session.
+    if (!nock) {
+      setSwaps([]);
+      setFetchedFor(`${evm ?? ""}`);
+      return;
+    }
+    const key = `${nock.pkh}`;
     try {
-      const lists = await Promise.all([
-        evm ? repo.listForAddress(evm) : Promise.resolve([]),
-        nock ? repo.listForNockPkh(nock.pkh) : Promise.resolve([]),
-      ]);
+      const list = await repo.listForNockPkh(nock.pkh);
       const hidden = getHiddenSwaps();
       const byId = new Map<string, SwapPublic>();
-      for (const s of lists.flat()) {
+      for (const s of list) {
         if (!s.hEvm) continue;
         if (hidden.has(s.hEvm.toLowerCase())) continue; // soft-deleted locally
         byId.set(s.hEvm.toLowerCase(), s);

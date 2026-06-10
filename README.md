@@ -13,7 +13,7 @@ Swaps are posted **open** — nobody types an address; addresses always come fro
 1. **Seller posts an open swap** — NOCK amount + USDC price. Seller's Nockchain + Base addresses come from their wallets. Shareable link: `/swap/<id>`.
 2. **Buyer claims** — opens the link, connects wallets, clicks *Claim*. Their Nockchain pkh is taken from their **authenticated session** (can't be spoofed) and committed once.
 3. **Seller locks NOCK** in the Nockchain HTLC (claim branch = buyer pkh + `hax` preimage; refund branch = seller pkh after a block height).
-4. **Buyer locks USDC** in [`NockOtcHtlc`](contracts/src/NockOtcHtlc.sol) on Base against `H_evm`.
+4. **Buyer locks USDC** in [`AtomicNock`](contracts/src/AtomicNock.sol) on Base contract: [0x5ac37e7A63b107d226d0b88129B8EB8b07172B75](https://basescan.org/address/0x5ac37e7A63b107d226d0b88129B8EB8b07172B75#code) against `H_evm`.
 5. **Seller withdraws USDC** with `withdraw(swapId, preimageJam)` → the preimage is now public in the Base tx calldata.
 6. **Buyer claims NOCK** — reads the preimage from that Base withdraw tx and claims on Nockchain.
 
@@ -26,7 +26,7 @@ If either side stalls, timelocks let each party refund their own leg.
 | **Web** (`src/`) | React + React Router SPA (Vite). Iris (Nockchain) + MetaMask (Base) connect from a wallet bar; per-step wizards drive each side of the swap. |
 | **Swap API** (`worker/`) | A Cloudflare Worker. Owns the swap state machine, authorizes writes by **Iris-signed session**, and verifies Nockchain signatures with `rose-wasm`. |
 | **Storage** | Swap **metadata** in Cloudflare KV (non-secret). The **preimage** stays client-side in IndexedDB — never on the server. |
-| **Contract** (`contracts/`) | Foundry HTLC `NockOtcHtlc.sol` on Base: `lock`, `withdraw(id, preimage)`, `refund`. |
+| **Contract** (`contracts/`) | Foundry HTLC `AtomicNock.sol` on Base: `lock`, `withdraw(id, preimage)`, `refund`. |
 
 `iris-wasm` / `rose-wasm` ship as npm packages (`@nockbox/iris-sdk`, `@nockchain/rose-wasm`) — no source build. Nockchain txs are built in-browser and signed in the Iris extension (`nock_connect`, `nock_signTx`, `nock_signMessage`); Base txs use MetaMask.
 
@@ -45,7 +45,7 @@ src/            React app (Vite)
   nock/  evm/   Nockchain + Base tx building / signing
   actions/      swap steps (generate / lock / withdraw / claim / refund)
 worker/         Cloudflare Worker — swap API (sessions, integrity, rose-wasm verify)
-contracts/      Foundry HTLC (NockOtcHtlc.sol)
+contracts/      Foundry HTLC (AtomicNock.sol)
 ```
 
 ## Local dev
@@ -79,7 +79,7 @@ The Nockchain gRPC-Web calls are proxied by the Vite dev server to `VITE_NOCK_GR
 | Variable | Purpose |
 |---|---|
 | `VITE_KV_URL` | Swap API URL. Local: `http://localhost:8787`. Empty: in-memory. Prod: deployed Worker URL. |
-| `VITE_HTLC_ADDRESS` | Deployed `NockOtcHtlc` on Base (default is the current deployment). |
+| `VITE_HTLC_ADDRESS` | Deployed `AtomicNock` on Base [0x5ac37e7A63b107d226d0b88129B8EB8b07172B75](https://basescan.org/address/0x5ac37e7A63b107d226d0b88129B8EB8b07172B75#code) |
 | `VITE_NOCK_GRPC_UPSTREAM` | Vite proxy target for Nockchain gRPC-Web (default `https://rpc.nockchain.net`). |
 | `VITE_ETH_RPC_URL` | Mainnet RPC for ENS lookups — must allow CORS (optional; has a default). |
 | `VITE_PRICE_URL` | NOCK/USD price feed (optional; empty = hidden). |

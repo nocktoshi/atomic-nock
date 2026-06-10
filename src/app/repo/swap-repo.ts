@@ -73,7 +73,8 @@ export class SwapRepository {
   }
 
   private async listByPrefix(prefix: string): Promise<SwapPublic[]> {
-    const keys = await this.kv.list(prefix);
+    // Listing is authenticated and server-scoped to the caller's own pkh.
+    const keys = await this.api.listKeys(prefix);
     const swaps = await Promise.all(
       keys.map((k) => this.get(k.slice(prefix.length) as Hex))
     );

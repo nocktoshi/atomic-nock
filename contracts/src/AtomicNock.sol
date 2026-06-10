@@ -9,21 +9,15 @@ interface IERC20 {
     function balanceOf(address account) external view returns (uint256);
 }
 
-contract NockOtcHtlc {
+contract AtomicNock {
     address public immutable usdc;
-
-    /// @notice Treasury / admin. Receives swap fees and is the sweep destination.
     address public owner;
-
-    /// @notice Swap fee in basis points (1e4 = 100%). Taken from the seller's
-    ///         withdraw amount on the happy path only; refunds are fee-free.
     uint16 public feeBps = 50; // 0.5%
-
-    /// @notice Hard cap so the owner can never set an abusive fee.
     uint16 public constant MAX_FEE_BPS = 500; // 5%
-
-    /// @notice Sum of all currently-locked USDC, so sweep() can never touch it.
+    uint256 public constant MIN_TIMELOCK = 30 minutes;
+    bool public paused;
     uint256 public totalLocked;
+    uint256 public feesAccrued;
 
     struct Lock {
         address buyer;
@@ -31,11 +25,15 @@ contract NockOtcHtlc {
         uint256 amount;
         bytes32 hashlock;
         uint256 timelock;
+        uint16 feeBps;
         bool withdrawn;
         bool refunded;
     }
 
     mapping(bytes32 => Lock) public locks;
+
+    /// @dev Minimal non-reentrancy guard (1 = unlocked, 2 = entered).
+    uint256 private _entered = 1;
 
     event Locked(
         bytes32 indexed swapId,
@@ -49,10 +47,24 @@ contract NockOtcHtlc {
     event Refunded(bytes32 indexed swapId, address indexed buyer);
     event Swept(address indexed to, uint256 amount);
     event FeeUpdated(uint16 oldFeeBps, uint16 newFeeBps);
+    event FeesClaimed(address indexed to, uint256 amount);
+    event PausedSet(bool paused);
     event OwnershipTransferred(address indexed oldOwner, address indexed newOwner);
 
     modifier onlyOwner() {
         require(msg.sender == owner, "not owner");
+        _;
+    }
+
+    modifier nonReentrant() {
+        require(_entered == 1, "reentrant");
+        _entered = 2;
+        _;
+        _entered = 1;
+    }
+
+    modifier whenNotPaused() {
+        require(!paused, "paused");
         _;
     }
 
@@ -76,6 +88,16 @@ contract NockOtcHtlc {
         feeBps = newFeeBps;
     }
 
+    function pause() external onlyOwner {
+        paused = true;
+        emit PausedSet(true);
+    }
+
+    function unpause() external onlyOwner {
+        paused = false;
+        emit PausedSet(false);
+    }
+
     function swapId(
         address seller,
         address buyer,
@@ -91,18 +113,15 @@ contract NockOtcHtlc {
         uint256 amount,
         bytes32 hashlock,
         uint256 timelock
-    ) external returns (bytes32 id) {
+    ) external whenNotPaused nonReentrant returns (bytes32 id) {
         require(seller != address(0), "zero seller");
         require(amount > 0, "zero amount");
-        require(timelock > block.timestamp, "timelock in past");
+        require(timelock >= block.timestamp + MIN_TIMELOCK, "timelock too soon");
 
         id = swapId(seller, msg.sender, amount, hashlock, timelock);
         require(locks[id].amount == 0, "swap exists");
 
-        require(
-            IERC20(usdc).transferFrom(msg.sender, address(this), amount),
-            "transferFrom failed"
-        );
+        _safeTransferFrom(msg.sender, address(this), amount);
 
         locks[id] = Lock({
             buyer: msg.sender,
@@ -110,6 +129,7 @@ contract NockOtcHtlc {
             amount: amount,
             hashlock: hashlock,
             timelock: timelock,
+            feeBps: feeBps,
             withdrawn: false,
             refunded: false
         });
@@ -118,7 +138,7 @@ contract NockOtcHtlc {
         emit Locked(id, msg.sender, seller, amount, hashlock, timelock);
     }
 
-    function withdraw(bytes32 id, bytes calldata preimageJam) external {
+    function withdraw(bytes32 id, bytes calldata preimageJam) external nonReentrant {
         Lock storage c = locks[id];
         require(c.amount > 0, "no swap");
         require(msg.sender == c.seller, "not seller");
@@ -130,17 +150,15 @@ contract NockOtcHtlc {
         uint256 amount = c.amount;
         totalLocked -= amount;
 
-        uint256 fee = (amount * feeBps) / 10_000;
+        uint256 fee = (amount * c.feeBps) / 10_000;
         uint256 sellerAmount = amount - fee;
+        feesAccrued += fee;
 
-        require(IERC20(usdc).transfer(c.seller, sellerAmount), "transfer failed");
-        if (fee > 0) {
-            require(IERC20(usdc).transfer(owner, fee), "fee transfer failed");
-        }
+        _safeTransfer(c.seller, sellerAmount);
         emit Withdrawn(id, c.seller, sellerAmount, fee);
     }
 
-    function refund(bytes32 id) external {
+    function refund(bytes32 id) external nonReentrant {
         Lock storage c = locks[id];
         require(c.amount > 0, "no swap");
         require(msg.sender == c.buyer, "not buyer");
@@ -151,20 +169,24 @@ contract NockOtcHtlc {
         c.refunded = true;
         totalLocked -= c.amount;
         // Refunds are fee-free: the swap did not complete.
-        require(IERC20(usdc).transfer(c.buyer, c.amount), "transfer failed");
+        _safeTransfer(c.buyer, c.amount);
         emit Refunded(id, c.buyer);
     }
 
-    /// @notice Recover USDC sent to the contract outside of lock() (e.g. a plain
-    ///         transfer from a broken gasless-delegator flow). Permissionless, but
-    ///         can only move the balance NOT backing active locks, to the treasury.
-    ///         Plain ERC20 transfers can't be rejected on receipt (no hook), so
-    ///         recovery is the only remedy.
-    function sweep() external returns (uint256 amount) {
+    function claimFees() external nonReentrant returns (uint256 amount) {
+        amount = feesAccrued;
+        require(amount > 0, "no fees");
+        feesAccrued = 0;
+        _safeTransfer(owner, amount);
+        emit FeesClaimed(owner, amount);
+    }
+
+    function sweep() external nonReentrant returns (uint256 amount) {
         uint256 bal = IERC20(usdc).balanceOf(address(this));
-        amount = bal - totalLocked; // reverts on underflow if accounting is off
+        // reverts on underflow if accounting is off
+        amount = bal - totalLocked - feesAccrued;
         require(amount > 0, "nothing to sweep");
-        require(IERC20(usdc).transfer(owner, amount), "transfer failed");
+        _safeTransfer(owner, amount);
         emit Swept(owner, amount);
     }
 
@@ -191,5 +213,36 @@ contract NockOtcHtlc {
             c.withdrawn,
             c.refunded
         );
+    }
+
+    // --- SafeERC20 (inline) ---------------------------------------------------
+    // Minimal SafeERC20 over the fixed `usdc` token: tolerates tokens that return
+    // no value on success (USDT-style) and reverts when one returns `false`.
+
+    function _safeTransfer(address to, uint256 value) private {
+        _callOptionalReturn(abi.encodeWithSelector(IERC20.transfer.selector, to, value));
+    }
+
+    function _safeTransferFrom(address from, address to, uint256 value) private {
+        _callOptionalReturn(abi.encodeWithSelector(IERC20.transferFrom.selector, from, to, value));
+    }
+
+    function _callOptionalReturn(bytes memory data) private {
+        (bool ok, bytes memory ret) = usdc.call(data);
+        if (!ok) {
+            // Bubble up the token's own revert reason (e.g. USDC "blacklisted").
+            if (ret.length > 0) {
+                assembly {
+                    revert(add(ret, 0x20), mload(ret))
+                }
+            }
+            revert("transfer failed");
+        }
+        if (ret.length == 0) {
+            // No return value: trust only if the token actually has code.
+            require(usdc.code.length > 0, "token has no code");
+        } else {
+            require(abi.decode(ret, (bool)), "transfer returned false");
+        }
     }
 }

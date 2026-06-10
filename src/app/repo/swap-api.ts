@@ -23,6 +23,8 @@ export interface SwapApi {
   claim(hEvm: string, buyerEth: string): Promise<SwapRecord>;
   /** Write a party's progress fields. */
   advance(hEvm: string, fields: Record<string, unknown>): Promise<SwapRecord>;
+  /** List index keys under a prefix (authenticated; server restricts to your own). */
+  listKeys(prefix: string): Promise<string[]>;
 }
 
 class HttpSwapApi implements SwapApi {
@@ -56,6 +58,23 @@ class HttpSwapApi implements SwapApi {
   }
   advance(hEvm: string, fields: Record<string, unknown>): Promise<SwapRecord> {
     return this.post(`/swap/${encodeURIComponent(hEvm)}/advance`, { fields });
+  }
+  async listKeys(prefix: string): Promise<string[]> {
+    const token = await ensureSession(this.baseUrl);
+    const res = await fetch(`${this.baseUrl}/list?prefix=${encodeURIComponent(prefix)}`, {
+      headers: { authorization: `Bearer ${token}` },
+    });
+    if (!res.ok) {
+      let msg = "";
+      try {
+        msg = ((await res.json()) as { error?: string }).error ?? "";
+      } catch {
+        /* ignore */
+      }
+      throw new Error(msg || `list failed (${res.status})`);
+    }
+    const json = (await res.json()) as { keys?: string[] };
+    return json.keys ?? [];
   }
 }
 
@@ -105,6 +124,9 @@ export class MemorySwapApi implements SwapApi {
     rec.version = ((rec.version as number) ?? 1) + 1;
     await this.write(rec);
     return rec;
+  }
+  listKeys(prefix: string): Promise<string[]> {
+    return this.kv.list(prefix);
   }
 }
 

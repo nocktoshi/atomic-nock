@@ -82,8 +82,13 @@ export async function generateSwapAction(
   const { hNock, hEvm } = await d.computeHashes(preimageJam);
 
   const gift = BigInt(input.gift);
-  let refundHeight = input.refundHeight ? BigInt(input.refundHeight) : 0n;
-  if (refundHeight === 0n) refundHeight = 1_000_000n + d.refundDelta;
+  const refundHeight = input.refundHeight ? BigInt(input.refundHeight) : 0n;
+  if (refundHeight <= 0n) {
+    throw new Error(
+      "Refund block height is required — reconnect Iris so it can default to the current height + " +
+        `${d.refundDelta} blocks.`
+    );
+  }
   const usdcTimelock = BigInt(Math.floor(Date.now() / 1000) + d.usdcTimeoutSec);
   const swap: SwapPublic = {
     hNock,

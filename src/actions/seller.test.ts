@@ -29,7 +29,7 @@ const validInput = {
   sellerEth: "0x1111111111111111111111111111111111111111",
   usdcAmount: "2.5",
   gift: "65536",
-  refundHeight: "",
+  refundHeight: "85000",
 };
 
 describe("generateSwapAction", () => {
@@ -44,9 +44,15 @@ describe("generateSwapAction", () => {
     expect(preimageJam).toEqual(new Uint8Array([1, 2]));
   });
 
-  it("defaults the refund height when empty", async () => {
+  it("uses the provided refund height", async () => {
     const { refundHeight } = await generateSwapAction(validInput, genDeps());
-    expect(refundHeight).toBe(1_000_000n + 10_000n);
+    expect(refundHeight).toBe(85_000n);
+  });
+
+  it("requires a refund block height (no magic-constant fallback)", async () => {
+    await expect(
+      generateSwapAction({ ...validInput, refundHeight: "" }, genDeps())
+    ).rejects.toThrow("Refund block height is required");
   });
 
   it("rejects a non-plausible wallet address", async () => {

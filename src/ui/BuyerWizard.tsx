@@ -114,8 +114,9 @@ function LockBody({ swap, lockCheck }: BuyerCtx) {
         </p>
       ) : lockCheck === "mismatch" ? (
         <p className="log error">
-          ⚠️ The on-chain NOCK lock does NOT match this swap's terms. Do not lock USDC —
-          ask the seller to re-lock, or walk away.
+          ⚠️ This swap is not safe to lock USDC into (wrong NOCK lock, or unsafe
+          timelocks — see the message below). Do not proceed; ask the seller to
+          re-post, or walk away.
         </p>
       ) : (
         <p className="fee-disclaimer">
@@ -222,6 +223,8 @@ const steps: WizardStep<BuyerCtx>[] = [
         sellerPkh: swap.sellerPkh!,
         refundHeight: swap.nockRefundHeight!,
         gift: swap.nockGift,
+        usdcTimelock: swap.usdcTimelock,
+        nockRefundHeight: swap.nockRefundHeight,
       });
       if (!ok) {
         throw new Error(`Won't lock USDC — ${reason ?? "NOCK lock not verified on-chain"}.`);
@@ -349,7 +352,7 @@ export function BuyerWizard({
           return;
         }
         setLockCheck("verifying");
-        const { ok, reason } = await verifyNockLockConfirmed(nock, {
+        const { ok, reason, fatal } = await verifyNockLockConfirmed(nock, {
           lockFirstName: fresh.lockFirstName,
           lockRoot: fresh.lockRoot,
           parentHash: fresh.parentHash,
@@ -358,18 +361,20 @@ export function BuyerWizard({
           sellerPkh: fresh.sellerPkh,
           refundHeight: fresh.nockRefundHeight,
           gift: fresh.nockGift,
+          usdcTimelock: fresh.usdcTimelock,
+          nockRefundHeight: fresh.nockRefundHeight,
         });
         if (!alive) return;
         if (ok) {
           setSwap(fresh);
           setLockCheck("confirmed");
           log("Seller's NOCK lock confirmed on-chain — safe to lock USDC.", true);
-        } else if (reason?.includes("does not match")) {
-          // A real mismatch (note exists but the lock root is wrong) — stop and warn.
+        } else if (fatal) {
+          // Hard failure (wrong lock, or unsafe timelocks) — stop and warn.
           setLockCheck("mismatch");
-          logErr(new Error(`NOCK lock mismatch — do NOT lock USDC. ${reason}`));
+          logErr(new Error(`Unsafe to lock USDC — ${reason}`));
         }
-        // else: not on-chain yet → stay "verifying", keep polling.
+        // else: transient (note not on-chain yet, height unreadable) → keep polling.
       } catch {
         /* transient — keep polling */
       }

@@ -8,6 +8,11 @@ import {
 } from "./tx.js";
 import { Nicks } from '@nockbox/iris-sdk/wasm'
 import type { NockWalletSession } from "./wallet.js";
+import {
+  NOCK_BLOCK_SECONDS,
+  SWAP_SAFETY_MARGIN_SEC,
+  MIN_USDC_WINDOW_SEC,
+} from "../config.js";
 
 
 const NICKS_PER_NOCK = 65536n;
@@ -176,8 +181,11 @@ export async function fetchNotesByFirstName(
 }
 
 /**
- * Confirm, before the buyer locks USDC, that the seller's HTLC gift note is real
- * and claimable by THIS buyer. Three checks, strongest last:
+ * Confirm, before the buyer locks USDC, that the seller's HTLC gift note is real,
+ * claimable by THIS buyer, and that the cross-chain timelocks are safe. Checks:
+ *   0. timelock ordering — the NOCK refund must land well AFTER the USDC refund,
+ *      so the buyer can claim NOCK after the seller reveals AND can refund USDC
+ *      before the seller can reclaim NOCK;
  *   1. a note exists at `lockFirstName` on-chain with at least the gift amount;
  *   2. the committed `lockRoot` equals the OR-lock root recomputed from
  *      [buyer pkh + hax(hNock)] / [seller pkh + tim(refundHeight)] (the node
@@ -185,9 +193,10 @@ export async function fetchNotesByFirstName(
  *   3. (when `parentHash` is known) the *expected* gift first name — recomputed
  *      from the lock + parentHash + gift — equals the declared `lockFirstName`.
  *      This ties lockFirstName to lockRoot, closing the "right root, wrong note"
- *      gap. The first name depends only on the output seed, not the input note;
- *      we self-validate that with two synthetic inputs and skip (rather than
- *      false-fail) if they ever disagree.
+ *      gap; self-validated with two synthetic inputs, skipped if they disagree.
+ *
+ * `fatal: true` = a hard failure (do NOT lock USDC); `fatal: false`/absent = a
+ * transient state (note not yet on-chain, height unreadable) — caller may retry.
  */
 export async function verifyNockLockConfirmed(
   wallet: NockWalletSession,
@@ -200,10 +209,47 @@ export async function verifyNockLockConfirmed(
     sellerPkh: Digest;
     refundHeight: bigint;
     gift: bigint;
+    usdcTimelock?: bigint;
+    nockRefundHeight?: bigint;
   }
-): Promise<{ ok: boolean; reason?: string }> {
+): Promise<{ ok: boolean; reason?: string; fatal?: boolean }> {
   try {
     await initIrisWasm();
+
+    // 0. Cross-chain timelock safety — the NOCK refund must be comfortably AFTER
+    //    the USDC refund (else a malicious seller can reclaim NOCK and still take
+    //    the USDC). Anchored at lock time, since open swaps may have aged.
+    if (params.usdcTimelock != null && params.nockRefundHeight != null) {
+      const height = await fetchCurrentBlockHeight(wallet);
+      if (height == null) {
+        return { ok: false, reason: "couldn't read the Nockchain height to check timelocks" };
+      }
+      const nowSec = BigInt(Math.floor(Date.now() / 1000));
+      if (params.nockRefundHeight <= height) {
+        return {
+          ok: false,
+          fatal: true,
+          reason: "the seller's NOCK refund window has already opened — do NOT lock USDC",
+        };
+      }
+      if (params.usdcTimelock <= nowSec + BigInt(MIN_USDC_WINDOW_SEC)) {
+        return {
+          ok: false,
+          fatal: true,
+          reason: "this swap's USDC refund window is too short — ask the seller to re-post",
+        };
+      }
+      const nockRefundWallclock =
+        nowSec + (params.nockRefundHeight - height) * BigInt(NOCK_BLOCK_SECONDS);
+      if (nockRefundWallclock < params.usdcTimelock + BigInt(SWAP_SAFETY_MARGIN_SEC)) {
+        return {
+          ok: false,
+          fatal: true,
+          reason:
+            "unsafe timelocks: the NOCK refund isn't far enough after the USDC refund — do NOT lock USDC",
+        };
+      }
+    }
 
     // 1. The HTLC gift note must be in the node's state with at least the gift.
     const { notes } = await fetchNotesByFirstName(wallet, params.lockFirstName);
@@ -228,6 +274,7 @@ export async function verifyNockLockConfirmed(
     if (String(params.lockRoot) !== String(expectedRoot)) {
       return {
         ok: false,
+        fatal: true,
         reason: "lock root does not match this swap's HTLC conditions",
       };
     }
@@ -261,6 +308,7 @@ export async function verifyNockLockConfirmed(
           if (String(firstA) === String(firstB) && String(firstA) !== String(params.lockFirstName)) {
             return {
               ok: false,
+              fatal: true,
               reason: "lock first name does not match this swap's HTLC conditions",
             };
           }
