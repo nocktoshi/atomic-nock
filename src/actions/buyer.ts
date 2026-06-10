@@ -1,7 +1,7 @@
 import type { Hex, Address } from "viem";
 import type { SwapPublic } from "../swap.js";
-import type { NockWalletSession } from "../nock/wallet.js";
 import type { Digest, Nicks } from "@nockbox/iris-sdk/wasm";
+
 
 /**
  * Buyer-side orchestration. Pure of storage: actions mutate/return the swap and
@@ -126,7 +126,6 @@ export async function resolvePreimage(
 
 export interface ClaimDeps {
   claimNock(params: {
-    wallet: NockWalletSession;
     lockFirstName: Digest;
     preimageJam: Uint8Array;
     hNock: Digest;
@@ -142,16 +141,19 @@ export interface ClaimDeps {
 }
 
 async function defaultClaimDeps(): Promise<ClaimDeps> {
-  const [{ claimNock }, { assertPreimageMatchesHNock }] = await Promise.all([
-    import("../nock/claim.js"),
-    import("../swap.js"),
-  ]);
-  return { claimNock, assertPreimageMatchesHNock };
+  const { assertPreimageMatchesHNock } = await import("../swap.js");
+  return {
+    claimNock: async () => {
+      throw new Error(
+        "claimNock requires a connected Iris wallet — use claimNockAction from useSession()"
+      );
+    },
+    assertPreimageMatchesHNock,
+  };
 }
 
 export async function claimNockAction(
   input: {
-    wallet: NockWalletSession | null;
     swap: SwapPublic;
     preimageJam: Uint8Array | null;
     lockFirstName: string;
@@ -159,7 +161,6 @@ export async function claimNockAction(
   },
   deps?: ClaimDeps
 ): Promise<{ txId: string; swap: SwapPublic }> {
-  if (!input.wallet) throw new Error("Connect Iris wallet first");
   if (!input.preimageJam) throw new Error("No preimage. Please load the swap.");
 
   const d = deps ?? (await defaultClaimDeps());
@@ -176,7 +177,6 @@ export async function claimNockAction(
   const gift = (input.gift || input.swap.nockGift.toString()) as Nicks;
 
   const txId = await d.claimNock({
-    wallet: input.wallet,
     lockFirstName,
     preimageJam: input.preimageJam,
     hNock: input.swap.hNock,

@@ -1,6 +1,5 @@
 import type { Hex, Address } from "viem";
 import type { SwapPublic } from "../swap.js";
-import type { NockWalletSession } from "../nock/wallet.js";
 import type { LockNockResult, LockNockPreview } from "../nock/lock.js";
 
 type LockNockFull = LockNockResult & { preview: LockNockPreview };
@@ -49,7 +48,6 @@ async function defaultGenerateSwapDeps(): Promise<GenerateSwapDeps> {
 
 export async function generateSwapAction(
   input: {
-    wallet: NockWalletSession | null;
     buyerPkh: string;
     walletAddress: string;
     /** Seller's connected Base address — persisted so the buyer never types it. */
@@ -60,7 +58,6 @@ export async function generateSwapAction(
   },
   deps?: GenerateSwapDeps
 ): Promise<{ swap: SwapPublic; preimageJam: Uint8Array; refundHeight: bigint }> {
-  if (!input.wallet) throw new Error("Connect Iris wallet first");
   const d = deps ?? (await defaultGenerateSwapDeps());
 
   const buyerPkh = input.buyerPkh.trim();
@@ -80,7 +77,6 @@ export async function generateSwapAction(
     throw new Error("Connect MetaMask so the swap records your Base address");
   }
   if (!input.usdcAmount.trim()) throw new Error("Enter the USDC amount for the swap");
-
   const { preimageJam } = await d.generateSwapSecret();
   const { hNock, hEvm } = await d.computeHashes(preimageJam);
 
@@ -88,7 +84,6 @@ export async function generateSwapAction(
   let refundHeight = input.refundHeight ? BigInt(input.refundHeight) : 0n;
   if (refundHeight === 0n) refundHeight = 1_000_000n + d.refundDelta;
   const usdcTimelock = BigInt(Math.floor(Date.now() / 1000) + d.usdcTimeoutSec);
-
   const swap: SwapPublic = {
     hNock,
     hEvm,
@@ -111,7 +106,6 @@ export async function generateSwapAction(
 export interface LockNockDeps {
   isPlausibleWalletAddress(v: string): boolean;
   lockNock(params: {
-    wallet: NockWalletSession;
     walletAddress: Digest;
     buyerPkh: Digest;
     gift: bigint;
@@ -122,23 +116,25 @@ export interface LockNockDeps {
 }
 
 async function defaultLockNockDeps(): Promise<LockNockDeps> {
-  const [{ isPlausibleWalletAddress }, { lockNock }] = await Promise.all([
-    import("../nock/balance.js"),
-    import("../nock/lock.js"),
-  ]);
-  return { isPlausibleWalletAddress, lockNock };
+  const { isPlausibleWalletAddress } = await import("../nock/balance.js");
+  return {
+    isPlausibleWalletAddress,
+    lockNock: async () => {
+      throw new Error(
+        "lockNock requires a connected Iris wallet — use lockNockAction from useSession()"
+      );
+    },
+  };
 }
 
 export async function lockNockAction(
   input: {
-    wallet: NockWalletSession | null;
     swap: SwapPublic | null;
     walletAddress: string;
   },
   deps?: LockNockDeps
 ): Promise<{ result: LockNockFull; swap: SwapPublic }> {
   if (!input.swap) throw new Error("Generate swap first");
-  if (!input.wallet) throw new Error("Connect Iris wallet first");
   const d = deps ?? (await defaultLockNockDeps());
 
   const walletAddress = input.walletAddress.trim() as Digest;
@@ -149,7 +145,6 @@ export async function lockNockAction(
   }
 
   const result = await d.lockNock({
-    wallet: input.wallet,
     walletAddress,
     buyerPkh: input.swap.buyerPkh,
     gift: input.swap.nockGift,
@@ -238,26 +233,27 @@ export async function withdrawUsdcAction(
 // ---------------------------------------------------------------------------
 
 export interface RefundNockDeps {
-  refundNock(params: {
-    wallet: NockWalletSession;
-    swap: SwapPublic;
-  }): Promise<string>;
+  refundNock(swap: SwapPublic): Promise<string>;
 }
 
 async function defaultRefundNockDeps(): Promise<RefundNockDeps> {
-  const { refundNock } = await import("../nock/refund.js");
-  return { refundNock };
+  return {
+    refundNock: async () => {
+      throw new Error(
+        "refundNock requires a connected Iris wallet — use refundNockAction from useSession()"
+      );
+    },
+  };
 }
 
 export async function refundNockAction(
-  input: { wallet: NockWalletSession | null; swap: SwapPublic | null },
+  input: { swap: SwapPublic | null },
   deps?: RefundNockDeps
 ): Promise<{ txId: string; swap: SwapPublic }> {
   if (!input.swap) throw new Error("No swap selected");
-  if (!input.wallet) throw new Error("Connect Iris wallet first");
   if (!input.swap.lockFirstName) throw new Error("Nothing locked to refund");
   const d = deps ?? (await defaultRefundNockDeps());
-  const txId = await d.refundNock({ wallet: input.wallet, swap: input.swap });
+  const txId = await d.refundNock(input.swap);
   input.swap.nockRefundTxId = txId;
   return { txId, swap: input.swap };
 }

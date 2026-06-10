@@ -84,7 +84,7 @@ h1 {
 }
 
 .preimage-status.ok {
-  color: #8b21c0;
+  color: var(--muted);
   font-weight: bold;
 }
 
@@ -271,6 +271,24 @@ main {
   margin: 0.5rem 0 1rem;
 }
 
+.share-link-row {
+  display: flex;
+  gap: 0.5rem;
+  align-items: stretch;
+  margin-bottom: 0.75rem;
+}
+
+.share-link-row input {
+  flex: 1;
+  font-size: 0.78rem;
+  color: var(--text);
+}
+
+.share-link-row button {
+  margin-top: 0;
+  white-space: nowrap;
+}
+
 .lookup-row {
   display: flex;
   gap: 0.5rem;
@@ -397,12 +415,42 @@ main {
   font-weight: bold;
 }
 
+.wallet-status-banner {
+  margin-bottom: 0.75rem;
+}
+
+.participant-issues {
+  margin: 0.5rem 0 0;
+  padding-left: 1.25rem;
+  font-size: 0.78rem;
+  color: var(--muted);
+}
+
+.participant-issues li {
+  margin: 0.25rem 0;
+}
+
 /* Badge row inside swap overview title */
 .swap-card-title-badges {
   display: flex;
   align-items: center;
   gap: 0.4rem;
   flex-wrap: wrap;
+}
+
+/* --- Order summary (wizard steps; read-only) --- */
+.swap-complete-heading {
+  margin: 0 0 0.75rem;
+  font-weight: bold;
+  color: var(--muted);
+}
+
+.swap-order-summary {
+  margin-top: 0.5rem;
+  padding: 1rem 1.1rem;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 16px;
 }
 
 /* --- Swap summary card (click to copy) --- */

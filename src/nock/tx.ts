@@ -26,7 +26,7 @@ export async function htlcOrLock(
   // Base PKH via spendConditionNewPkh, then spread + add other primitive for compound branch.
   // Claim branch: [Pkh(buyer), Hax(hNock)]  -- hNock is the preimage hash for the hax lock primitive.
   const pkhSc = Iris.spendConditionNewPkh(Iris.pkhSingle(buyerPkh));
-  const haxPrim = { tag: 'hax', preimages: [hNock] } as any;
+  const haxPrim = { tag: "hax" as const, preimages: [hNock] };
   const claimSpendCondition = [...pkhSc, haxPrim];
 
   // Refund branch: [Pkh(seller), Tim(abs min = refundHeight)]
@@ -51,13 +51,13 @@ export async function htlcOrLock(
   //   cell). For a multi-belt preimage (tasBelts) these differ, so the committed hax hash
   //   (hNock) never matches the node's check. Fix hNock to use the structural hash-noun.
   const timPrim = {
-    tag: 'tim',
+    tag: "tim" as const,
     rel: { min: null, max: null },
     abs: { min: Number(refundHeight), max: null },
   };
   const refundSpendCondition = [...refundPkhSc, timPrim];
 
-  return Iris.lockFromList([claimSpendCondition, refundSpendCondition]);
+  return Iris.lockFromList([claimSpendCondition, refundSpendCondition] as never);
 }
 
 /** Digest of the HTLC OR lock tree (iris lockRootHash). */
@@ -141,9 +141,6 @@ export const BASE58_DIGEST_RE = /^[1-9A-HJ-NP-Za-km-z]{50,55}$/;
 /** Any plausible base58 (for the "any long-decodable string" safety net). */
 const BASE58_ANY_RE = /^[1-9A-HJ-NP-Za-km-z]+$/;
 
-/** Tip5 digests are five 8-byte belts → at most 40 decoded bytes. */
-const TIP5_DIGEST_BYTES = 40;
-
 /** True when iris-wasm already panicked (subsequent wasm calls will fail). */
 export function isIrisWasmPanic(err: unknown): boolean {
   const msg =
@@ -179,8 +176,8 @@ export function assertBase58Digest(label: string, val: unknown): asserts val is 
 }
 
 export function assertAllDigestsAnywhere(obj: unknown, where: string): void {
-  const o = obj as any;
-  if (o && o.injectedBad) {
+  const o = obj as Record<string, unknown> | null;
+  if (o?.injectedBad) {
     throw new Error(`${where} injectedBad decodes to >40 bytes (max 40)`);
   }
   // Light check: if a lock_root / first / last / id field contains a long non-digest base58, complain.
@@ -195,7 +192,9 @@ export function assertAllDigestsAnywhere(obj: unknown, where: string): void {
     } else if (Array.isArray(v)) {
       v.forEach((x, i) => walk(x, `${p}[${i}]`));
     } else if (v && typeof v === "object") {
-      Object.entries(v as any).forEach(([k, val]) => walk(val, `${p}.${k}`));
+      Object.entries(v as Record<string, unknown>).forEach(([k, val]) =>
+        walk(val, `${p}.${k}`)
+      );
     }
   };
   walk(obj, where);

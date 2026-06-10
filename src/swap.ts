@@ -44,6 +44,13 @@ export interface SwapPublic {
 }
 
 /**
+ * In-progress swap held by the wizard before it's finalized by an action.
+ * Every field is optional; once `generateSwapAction` runs it produces a full
+ * `SwapPublic`. Persisted/transacted code always uses `SwapPublic`, not this.
+ */
+export type DraftSwap = Partial<SwapPublic>;
+
+/**
  * Build swap secret: jam of a random 32-byte value as a belt-sequence noun.
  * Must use tasBelts (not tas): a single tas(hex) atom is too large for hashNoun/Tip5.
  */

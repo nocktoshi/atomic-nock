@@ -202,6 +202,6 @@ export async function runStep<T>(
       err instanceof Error && err.message
         ? err.message
         : formatGrpcError(err);
-    throw new Error(`${step}: ${detail}`);
+    throw new Error(`${step}: ${detail}`, { cause: err });
   }
 }

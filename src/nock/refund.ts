@@ -1,10 +1,9 @@
 import { getIrisWasm, initIrisWasm, type Note } from "../iris.js";
 import { getRoseWasm, initRoseWasm } from "../rose.js";
 import { runStep } from "../grpc.js";
-import { Nicks, Digest, Lock } from "@nockbox/iris-sdk/wasm";
+import { Nicks, Lock } from "@nockbox/iris-sdk/wasm";
 import { htlcOrLock } from "./tx.js";
-import type { NockWalletSession } from "./wallet.js";
-import { signAndSendIrisTx } from "./wallet.js";
+import { signAndSendIrisTx, type NockWalletSession } from "./wallet.js";
 import { fetchNotesByFirstName, pickLargestNote } from "./balance.js";
 import type { SwapPublic } from "../swap.js";
 
@@ -16,11 +15,10 @@ import type { SwapPublic } from "../swap.js";
  * NOTE: like the claim path, the exact note-injection / timelock handling may need
  * on-chain iteration; this is the structural implementation.
  */
-export async function refundNock(params: {
-  wallet: NockWalletSession;
-  swap: SwapPublic;
-}): Promise<string> {
-  const { wallet, swap } = params;
+export async function refundNock(
+  wallet: NockWalletSession,
+  swap: SwapPublic
+): Promise<string> {
   if (!swap.lockFirstName) throw new Error("Swap has no lockFirstName to refund");
 
   await initIrisWasm();
@@ -49,10 +47,12 @@ export async function refundNock(params: {
     );
   }
 
-  let { note: htlcNote, assets: htlcAssets } = await runStep(
+  const picked = await runStep(
     "Select HTLC note",
     async () => pickLargestNote(lockNotes, BigInt(swap.nockGift.toString()))
   );
+  let htlcNote = picked.note;
+  const htlcAssets = picked.assets;
 
   // Same birth-source injection as the claim path (needed for the node's
   // "first name matches parent" check).
@@ -61,7 +61,7 @@ export async function refundNock(params: {
   if (effParent) {
     htlcNote = Iris.noteFromProtobuf(Iris.noteToProtobuf(htlcNote));
     const birthSrc = { Parent: { parent: effParent, index: effIdx } };
-    const n = htlcNote as any;
+    const n = htlcNote as Note & Record<string, unknown>;
     n.source = birthSrc;
     n.parent_hash = effParent;
     if (n.name && typeof n.name === "object") {
@@ -78,7 +78,7 @@ export async function refundNock(params: {
   const tx = new Rose.TxBuilder(settings);
 
   await runStep("Build HTLC refund spend", async () => {
-    let orLock = (htlcNote as any).lock as Lock;
+    let orLock = (htlcNote as Note & { lock?: Lock }).lock;
     if (!orLock) {
       orLock = await htlcOrLock(
         swap.hNock,

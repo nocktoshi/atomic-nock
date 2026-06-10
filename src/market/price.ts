@@ -15,8 +15,9 @@ function extractUsd(data: unknown): number | null {
     const o = data as Record<string, unknown>;
     // CoinGecko simple/price: { nock: { usd: 1.23 } }
     for (const v of Object.values(o)) {
-      if (v && typeof v === "object" && typeof (v as any).usd === "number") {
-        return (v as any).usd;
+      if (v && typeof v === "object") {
+        const usd = (v as Record<string, unknown>).usd;
+        if (typeof usd === "number") return usd;
       }
     }
     if (typeof o.usd === "number") return o.usd;

@@ -2,7 +2,6 @@ import { describe, it, expect, vi } from "vitest";
 import type { Hex, Address } from "viem";
 import type { Digest } from "@nockbox/iris-sdk/wasm";
 import type { SwapPublic } from "../swap.js";
-import type { NockWalletSession } from "../nock/wallet.js";
 import {
   generateSwapAction,
   lockNockAction,
@@ -11,8 +10,6 @@ import {
   type LockNockDeps,
   type WithdrawUsdcDeps,
 } from "./seller.js";
-
-const wallet = { pkh: "SELLERPKH" } as unknown as NockWalletSession;
 
 function genDeps(overrides: Partial<GenerateSwapDeps> = {}): GenerateSwapDeps {
   return {
@@ -27,7 +24,6 @@ function genDeps(overrides: Partial<GenerateSwapDeps> = {}): GenerateSwapDeps {
 }
 
 const validInput = {
-  wallet,
   buyerPkh: "BUYER_ADDR",
   walletAddress: "SELLER_ADDR",
   sellerEth: "0x1111111111111111111111111111111111111111",
@@ -64,11 +60,6 @@ describe("generateSwapAction", () => {
     ).rejects.toThrow("Connect MetaMask");
   });
 
-  it("requires a connected wallet", async () => {
-    await expect(generateSwapAction({ ...validInput, wallet: null }, genDeps())).rejects.toThrow(
-      "Connect Iris wallet first"
-    );
-  });
 });
 
 function preLockSwap(): SwapPublic {
@@ -106,7 +97,7 @@ function lockDeps(overrides: Partial<LockNockDeps> = {}): LockNockDeps {
 describe("lockNockAction", () => {
   it("records lockFirstName/parentHash/txId on the swap", async () => {
     const { swap } = await lockNockAction(
-      { wallet, swap: preLockSwap(), walletAddress: "NEW_SELLER_ADDR" },
+      { swap: preLockSwap(), walletAddress: "NEW_SELLER_ADDR" },
       lockDeps()
     );
     expect(swap.lockFirstName).toBe("LOCK_FIRST_NAME");
@@ -116,13 +107,10 @@ describe("lockNockAction", () => {
     expect(swap.nockLockTxId).toBe("tx-lock-1");
   });
 
-  it("requires a generated swap and a connected wallet", async () => {
-    await expect(lockNockAction({ wallet, swap: null, walletAddress: "X" }, lockDeps())).rejects.toThrow(
+  it("requires a generated swap", async () => {
+    await expect(lockNockAction({ swap: null, walletAddress: "X" }, lockDeps())).rejects.toThrow(
       "Generate swap first"
     );
-    await expect(
-      lockNockAction({ wallet: null, swap: preLockSwap(), walletAddress: "X" }, lockDeps())
-    ).rejects.toThrow("Connect Iris wallet first");
   });
 });
 

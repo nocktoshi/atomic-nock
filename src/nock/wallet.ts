@@ -2,7 +2,7 @@
  * Iris extension wallet — build with iris-wasm, sign via API 1 `nock_signTx`, send protobuf as-is.
  */
 import { getGrpcWebUrl, formatGrpcError, formatWalletError } from "../grpc.js";
-import { isPlausibleWalletAddress, noteNameKey } from "./balance.js";
+import { isPlausibleWalletAddress } from "./balance.js";
 import {
   isIrisWasmPanic,
 } from "./tx.js";
@@ -11,16 +11,15 @@ import { resetIrisWasm } from "../iris.js";
 import {
   getIrisWasm,
   initIrisWasm,
-  DEFAULT_FEE_PER_WORD,
-  type RawTxV1,
   type NockchainTx,
   type Note,
-  type SpendCondition,
 } from "../iris.js";
 // rose-wasm (built from iris-rs with the structural-hax Witness::hash fix) is used
 // for the tx-id calc so rawTxV1CalcId matches the node. @nockbox/iris-sdk's calc_id
 // hashes the hax preimage with whole-noun varlen and produces the wrong id.
 import { getRoseWasm } from "../rose.js";
+import type { PbCom2RawTransaction, RawTxV1 } from "@nockchain/rose-wasm";
+
 
 /** Iris extension RPC API v1 (must match extension `RPC_API_VERSION`). */
 const IRIS_RPC_API_V1 = "1.0.0";
@@ -28,114 +27,12 @@ const IRIS_RPC_API_V1 = "1.0.0";
 /** Iris SDK provider methods (API 1). */
 const IRIS_SIGN_TX = "nock_signTx";
 
-/** True when witness carries an inlined hax preimage (protobuf `hax` or raw `hax_map`). */
-function witnessHasHaxPreimage(witness: Record<string, unknown>): boolean {
-  const hax = witness.hax;
-  if (Array.isArray(hax) && hax.length > 0) {
-    const ok = hax.some((entry) => {
-      if (entry == null || typeof entry !== "object") return false;
-      const e = entry as { hash?: unknown; value?: unknown };
-      if (e.hash == null) return false;
-      const v = e.value;
-      if (v instanceof Uint8Array) return v.length > 0;
-      if (Array.isArray(v)) return v.length > 0;
-      if (typeof v === "string") return v.length > 0;
-      return v != null;
-    });
-    if (ok) return true;
-  }
-  const map = witness.hax_map as unknown;
-  if (!Array.isArray(map) || map.length === 0) return false;
-  return map.some((entry) => {
-    if (entry == null) return false;
-    const val = Array.isArray(entry) ? entry[1] : (entry as { value?: unknown }).value;
-    if (val instanceof Uint8Array) return val.length > 0;
-    if (Array.isArray(val)) return val.length > 0;
-    return val != null;
-  });
-}
-
-/** PKH sig required when the proved spend-condition includes %pkh (HTLC claim branch does). */
-function witnessSpendNeedsPkhSig(witness: Record<string, unknown>): boolean {
-  const lmp = witness.lock_merkle_proof as
-    | { spend_condition?: { primitives?: Array<{ primitive?: Record<string, unknown> }> } }
-    | undefined;
-  const primitives = lmp?.spend_condition?.primitives ?? [];
-  return primitives.some((p) => p.primitive != null && "Pkh" in p.primitive);
-}
-
-function witnessSpendNeedsHaxPreimage(witness: Record<string, unknown>): boolean {
-  const lmp = witness.lock_merkle_proof as
-    | { spend_condition?: { primitives?: Array<{ primitive?: Record<string, unknown> }> } }
-    | undefined;
-  const primitives = lmp?.spend_condition?.primitives ?? [];
-  return primitives.some((p) => p.primitive != null && "Hax" in p.primitive);
-}
-
-function witnessPkhIsSigned(witness: Record<string, unknown>): boolean {
-  const entries = (
-    witness.pkh_signature as { entries?: Array<{ pubkey?: unknown; signature?: unknown }> }
-  )?.entries ?? [];
-  return entries.some((e) => e.pubkey != null && e.signature != null);
-}
 
 // NOTE: previous client-side tx-id workarounds (stripPkhSignatureOnHaxSpends,
 // ensureCorrectHaxPreimageHashes) were removed. The id is now computed by rose-wasm's
 // rawTxV1CalcId, whose Witness::hash hashes the hax preimage structurally (matching the
 // node) and includes the pkh signature — so no client-side patching is needed, and the
 // node accepts the declared id directly.
-
-function analyzeWitnessSpendsInProtobuf(rawPb: Record<string, unknown>): {
-  pkhNeed: number;
-  pkhSigned: number;
-  haxNeed: number;
-  haxOk: number;
-  unlockValid: boolean;
-} {
-  const spends = rawPb.spends;
-  if (!Array.isArray(spends)) {
-    return { pkhNeed: 0, pkhSigned: 0, haxNeed: 0, haxOk: 0, unlockValid: false };
-  }
-
-  let pkhNeed = 0;
-  let pkhSigned = 0;
-  let haxNeed = 0;
-  let haxOk = 0;
-  let unlockValid = true;
-
-  for (const entry of spends) {
-    if (entry == null || typeof entry !== "object") continue;
-    const spend = (entry as { spend?: Record<string, unknown> }).spend;
-    const spendKind = spend?.spend_kind;
-    if (spendKind == null || typeof spendKind !== "object") continue;
-    const witnessWrap = (spendKind as { Witness?: { witness?: Record<string, unknown> } })
-      .Witness;
-    const witness = witnessWrap?.witness;
-    if (!witness || typeof witness !== "object") continue;
-
-    const needsPkh = witnessSpendNeedsPkhSig(witness);
-    const needsHax = witnessSpendNeedsHaxPreimage(witness);
-    const hasHax = witnessHasHaxPreimage(witness);
-    const hasPkh = needsPkh && witnessPkhIsSigned(witness);
-
-    if (needsPkh) {
-      pkhNeed++;
-      if (hasPkh) pkhSigned++;
-      else unlockValid = false;
-    }
-    if (needsHax) {
-      haxNeed++;
-      if (hasHax) haxOk++;
-      else unlockValid = false;
-    }
-  }
-
-  return { pkhNeed, pkhSigned, haxNeed, haxOk, unlockValid };
-}
-
-type GrpcRawTx = Parameters<
-  InstanceType<Awaited<ReturnType<typeof getIrisWasm>>["GrpcClient"]>["sendTransaction"]
->[0];
 
 /** Sign params for `nock_signTx` (native `NockchainTx` + optional input notes). */
 export type IrisSignTxParams = {
@@ -149,25 +46,38 @@ export type IrisSignTxParams = {
  * Rust-side spend witness expect it on the individual spend so it serializes into the hax
  * list with value bytes for check:hax.
  */
-export function ensureHaxPreimagesOnSpendWitnesses(tx: any): void {
+type MutableRecord = Record<string, unknown>;
+
+function asMutable(value: unknown): MutableRecord {
+  return value as unknown as MutableRecord;
+}
+
+export function ensureHaxPreimagesOnSpendWitnesses(tx: NockchainTx): void {
   try {
-    const wd = tx?.witness_data;
-    const wdata = wd?.data ?? wd;
-    if (!Array.isArray(wdata) || !Array.isArray(tx?.spends)) return;
+    const txRec = tx as NockchainTx & MutableRecord;
+    const wd = txRec.witness_data
+      ? asMutable(txRec.witness_data)
+      : undefined;
+    const wdata = (wd?.data ?? wd) as unknown;
+    if (!Array.isArray(wdata) || !Array.isArray(txRec.spends)) return;
     for (const entry of wdata) {
       if (!Array.isArray(entry) || entry.length < 2) continue;
-      const name = entry[0];
-      const w = entry[1];
-      const haxEntries = w?.hax_map;
+      const name = asMutable(entry[0]);
+      const w = asMutable(entry[1]);
+      const haxEntries = w.hax_map;
       if (!Array.isArray(haxEntries) || haxEntries.length === 0) continue;
-      for (const sp of tx.spends) {
+      for (const sp of txRec.spends) {
         if (!Array.isArray(sp) || sp.length < 2) continue;
-        const sname = sp[0];
-        const sw = sp[1]?.witness ?? sp[1];
-        if (sw && sname?.first === name?.first && sname?.last === name?.last) {
-          if (!Array.isArray(sw.hax_map) || sw.hax_map.length === 0) {
-            sw.hax_map = haxEntries;
-          }
+        const sname = asMutable(sp[0]);
+        const spendBody = asMutable(sp[1]);
+        const sw = asMutable(spendBody.witness ?? spendBody);
+        if (
+          sw &&
+          sname.first === name.first &&
+          sname.last === name.last &&
+          (!Array.isArray(sw.hax_map) || sw.hax_map.length === 0)
+        ) {
+          sw.hax_map = haxEntries;
         }
       }
     }
@@ -243,7 +153,7 @@ async function irisRequest<T>(
       console.error(`Iris ${args.method} cause:`, err.cause);
     }
     if (!(err instanceof Error)) {
-      throw new Error(formatWalletError(err));
+      throw new Error(formatWalletError(err), { cause: err });
     }
     throw err;
   }
@@ -256,38 +166,6 @@ function unwrapSignedTxResponse(result: unknown): unknown {
     if ("rawTx" in result) return (result as { rawTx: unknown }).rawTx;
   }
   return result;
-}
-
-function coerceRpcBytes(value: unknown): unknown {
-  if (value instanceof Uint8Array) return value;
-  if (
-    Array.isArray(value) &&
-    value.length > 0 &&
-    value.every((x) => typeof x === "number")
-  ) {
-    return new Uint8Array(value as number[]);
-  }
-  return value;
-}
-
-/** Each witness spend must have the unlocks it uses (hax preimage and/or PKH sig, not both blindly). */
-function assertSignedProtobuf(rawPb: Record<string, unknown>): void {
-  const { pkhNeed, pkhSigned, haxNeed, haxOk, unlockValid } =
-    analyzeWitnessSpendsInProtobuf(rawPb);
-  if (unlockValid) return;
-
-  const parts: string[] = [];
-  if (pkhNeed > 0 && pkhSigned < pkhNeed) {
-    parts.push(`PKH signatures ${pkhSigned}/${pkhNeed}`);
-  }
-  if (haxNeed > 0 && haxOk < haxNeed) {
-    parts.push(`hax preimages ${haxOk}/${haxNeed}`);
-  }
-  throw new Error(
-    `Transaction unlocks incomplete (${parts.join("; ") || "witness spends"}). ` +
-    `HTLC claim branch is [pkh AND hax] — you need the buyer PKH signature and the preimage jam. ` +
-    `Unlock Iris, approve signing, and retry Claim NOCK.`
-  );
 }
 
 async function waitTxAccepted(
@@ -444,12 +322,11 @@ export type ClaimSignContext = {
  * and produce a correctly authorized spend. Without them you get "Inputs (0)".
  */
 export async function signAndSendIrisTx(
-  session: NockWalletSession,
+  wallet: NockWalletSession,
   builder: InstanceType<Awaited<ReturnType<typeof getIrisWasm>>["TxBuilder"]>,
   inputNotes: Note[] = []
 ): Promise<string> {
   await initIrisWasm();
-  const Iris = await getIrisWasm();
 
   let nockTx: NockchainTx;
   try {
@@ -461,30 +338,36 @@ export async function signAndSendIrisTx(
     // first-name derivation on the node requires the Source (Parent { parent, index }) that
     // was assigned when the note was emitted as an output of the seller's lock tx.
     if (inputNotes && inputNotes.length > 0 && nockTx.spends) {
-      nockTx.spends.forEach((spend: any, i: number) => {
-        if (i < inputNotes.length && spend && spend[0]) {
-          const note = inputNotes[i] as any;
-          const nameObj = spend[0];
+      nockTx.spends.forEach((spend, i) => {
+        if (i >= inputNotes.length || !Array.isArray(spend) || !spend[0]) return;
+        const note = asMutable(inputNotes[i]) as Note & MutableRecord;
+        const nameObj = asMutable(spend[0]);
+        const noteName = note.name ? asMutable(note.name) : undefined;
 
-          const src = note.source || (note.name && note.name.source);
-          if (src) {
-            if (!nameObj.source) nameObj.source = src;
-            // Also write the Parent form in common alternative locations some noun/pb paths read
-            if (!nameObj.Parent && src.Parent) nameObj.Parent = src.Parent;
-            if (src.Parent) {
-              nameObj.parent = src.Parent.parent ?? nameObj.parent;
-              nameObj.birth_parent = src.Parent.parent ?? nameObj.birth_parent;
+        const src = note.source ?? noteName?.source;
+        if (src && typeof src === "object") {
+          const srcRec = asMutable(src);
+          if (!nameObj.source) nameObj.source = src;
+          const parent = srcRec.Parent ? asMutable(srcRec.Parent) : undefined;
+          if (!nameObj.Parent && parent) nameObj.Parent = parent;
+          if (parent) {
+            const parentId = parent.parent;
+            if (parentId != null) {
+              nameObj.parent ??= parentId;
+              nameObj.birth_parent ??= parentId;
             }
           }
+        }
 
-          const ph = note.parent_hash || (note.name && note.name.parent_hash) || (note.name && note.name.parent);
-          if (ph && !nameObj.parent_hash) nameObj.parent_hash = ph;
-          if (ph && !nameObj.parent) nameObj.parent = ph;
+        const ph =
+          note.parent_hash ?? noteName?.parent_hash ?? noteName?.parent;
+        if (ph != null) {
+          nameObj.parent_hash ??= ph;
+          nameObj.parent ??= ph;
+        }
 
-          // If the name object itself is the lockFirstName-ish thing and still lacks source, log it loudly.
-          if (src && !nameObj.source && !nameObj.Parent) {
-            console.warn('still no source/Parent after force patch on spend name:', nameObj);
-          }
+        if (src && !nameObj.source && !nameObj.Parent) {
+          console.warn("still no source/Parent after force patch on spend name:", nameObj);
         }
       });
     }
@@ -492,39 +375,60 @@ export async function signAndSendIrisTx(
   } catch (err) {
     const msg = String(err);
     if (msg.includes("Insufficient funds")) {
-      throw new Error(
-        `${msg} — fund buyer wallet with ~2+ NOCK for fees`
-      );
+      throw new Error(`${msg} — fund buyer wallet with ~2+ NOCK for fees`, {
+        cause: err,
+      });
     }
-    throw new Error(`Tx build: ${formatGrpcError(err)}`);
+    throw new Error(`Tx build: ${formatGrpcError(err)}`, { cause: err });
   }
 
   // Make sure hax preimages added via builder.addPreimage end up on the per-spend witness
   // (not only in witness_data). See ensureHaxPreimagesOnSpendWitnesses.
   ensureHaxPreimagesOnSpendWitnesses(nockTx);
-  if ((nockTx as any)?.witness_data?.data?.some((e: any) => e?.[1]?.hax_map?.length)) {
+  const witnessData = (nockTx as NockchainTx & MutableRecord).witness_data
+    ? asMutable((nockTx as NockchainTx & MutableRecord).witness_data)
+    : undefined;
+  if (
+    Array.isArray(witnessData?.data) &&
+    witnessData.data.some((e: unknown) => {
+      if (!Array.isArray(e) || e.length < 2) return false;
+      const w = asMutable(e[1]);
+      return Array.isArray(w.hax_map) && w.hax_map.length > 0;
+    })
+  ) {
     console.debug("hax preimage present in nockTx (synced to spend witness)");
   }
 
-
-  // Stash for debugging the exact nockTx shape the signer receives (spends, witness_data,
-  // hax_map on the per-spend witness after our sync, etc.). This replaces the old
-  // __lastClaimNockTx snapshot that was built from the claim path (which could trigger
-  // aliasing panics on a later build()).
-  (globalThis as any).__lastUnsignedNockTx = nockTx;
+  // Stash for debugging the exact nockTx shape the signer receives.
+  (globalThis as typeof globalThis & { __lastUnsignedNockTx?: NockchainTx }).__lastUnsignedNockTx =
+    nockTx;
   console.debug("built unsigned nockTx (hax synced on spend witness; inspect __lastUnsignedNockTx)");
-  const inputName = nockTx.spends?.[0]?.[0];
-  console.log('unsigned nockTx input note name (spend[0][0] / the Name that must carry source for custom-firstName HTLC notes):', inputName);
-  console.log('unsigned nockTx input note source on name:', (inputName as any)?.source);
-  console.log('unsigned nockTx input note Parent on name:', (inputName as any)?.Parent || (inputName as any)?.parent);
-  console.log('unsigned nockTx output seeds (each should have parent_hash = hash of the HTLC input note):', nockTx.spends?.[0]?.[1]?.seeds);
+  const inputName = nockTx.spends?.[0]?.[0]
+    ? asMutable(nockTx.spends[0][0])
+    : undefined;
+  console.log(
+    "unsigned nockTx input note name (spend[0][0] / the Name that must carry source for custom-firstName HTLC notes):",
+    inputName
+  );
+  console.log("unsigned nockTx input note source on name:", inputName?.source);
+  console.log(
+    "unsigned nockTx input note Parent on name:",
+    inputName?.Parent ?? inputName?.parent
+  );
+  const firstSpend = nockTx.spends?.[0]?.[1]
+    ? asMutable(nockTx.spends[0][1])
+    : undefined;
+  console.log(
+    "unsigned nockTx output seeds (each should have parent_hash = hash of the HTLC input note):",
+    firstSpend?.seeds
+  );
 
   let signedNockTx: NockchainTx;
   try {
-    signedNockTx = await session.provider.signTx({
+    signedNockTx = await wallet.provider.signTx({
       tx: nockTx,
       notes: inputNotes,
-    } as any);
+    });
   } catch (err) {
     if (isIrisWasmPanic(err)) {
       try {
@@ -535,7 +439,8 @@ export async function signAndSendIrisTx(
     }
     throw new Error(
       `Iris signing failed: ${formatIrisSignFailure(err)}. ` +
-      `Unlock Iris, approve the popup (check it is not blocked), then retry Claim NOCK.`
+        `Unlock Iris, approve the popup (check it is not blocked), then retry Claim NOCK.`,
+      { cause: err }
     );
   }
 
@@ -547,38 +452,30 @@ export async function signAndSendIrisTx(
   // The extension may have computed a final id on the fully signed object (after pkh sigs).
   // Prefer it if present — it can be more consistent with the node's expectation than a
   // client-side raw calc (especially with hax preimages).
-  const signedId = (signedNockTx as any)?.id;
+  const signedId = (signedNockTx as NockchainTx & MutableRecord).id;
   if (signedId) {
     console.debug("signedNockTx carried id:", signedId);
   }
 
-  // After extension signing we always recompute + force the final id from the raw (see below)
-  // and log the number of spends + whether hax preimage values are present on the wire form.
-  // The extension mutates the tx (pkh sigs), and page-side addPreimage state must survive the
-  // build/sign/serialize roundtrip for the hax to appear in the final bytes the node receives.
-  let pb: any;
-  let raw: any = null;
   // Use rose-wasm for the id calc: its Witness::hash hashes the hax preimage with
   // the STRUCTURAL hash-noun (matching the node's ++hash-noun), so rawTxV1CalcId
-  // produces the exact id the node expects. (Do NOT strip the pkh signature — the
-  // node includes pkh in the tx hash for every spend; stripping yields a wrong id.)
-  const Rose: any = await getRoseWasm();
-  raw = Rose.nockchainTxToRawTx(signedNockTx);
+  // produces the exact id the node expects.
+  const Rose = await getRoseWasm();
+  const raw = Rose.nockchainTxToRawTx(signedNockTx);
 
   const correctedId = Rose.rawTxV1CalcId(raw);
-  (raw as any).id = correctedId;
-  console.debug('txn id (rose rawTxV1CalcId): ', correctedId);
+  const rawWithId = { ...raw, id: correctedId } as RawTxV1;
+  console.debug("txn id (rose rawTxV1CalcId): ", correctedId);
 
-  pb = Rose.rawTxToProtobuf(raw);
-  (pb as any).id = correctedId;
+  const pb = { ...Rose.rawTxToProtobuf(rawWithId), id: correctedId } as PbCom2RawTransaction;
 
-  const txId = (pb as any)?.id || "unknown-tx-id";
+  const txId = pb.id || "unknown-tx-id";
 
   console.debug('txn id (protobuf): ', txId);
   console.log('pb (raw, may not be fully serializable):', pb);
   console.dir(pb, { depth: 5 });
 
-  await session.grpc.sendTransaction(pb);
+  await wallet.grpc.sendTransaction(pb);
 
   console.warn("broadcast txId", txId);
 
@@ -587,7 +484,7 @@ export async function signAndSendIrisTx(
     "window.__resendWithCorrectId('<the expected id>') from the console to re-send the same tx bytes with the correct declared id."
   );
 
-  const accepted = await waitTxAccepted(session.grpc, txId, 30_000);
+  const accepted = await waitTxAccepted(wallet.grpc, txId, 30_000);
   if (!accepted) {
     throw new Error(
       `Transaction not accepted within 30s (id ${txId}). ` +

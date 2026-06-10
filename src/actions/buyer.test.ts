@@ -2,7 +2,6 @@ import { describe, it, expect, vi } from "vitest";
 import type { Hex, Address } from "viem";
 import type { Digest } from "@nockbox/iris-sdk/wasm";
 import type { SwapPublic } from "../swap.js";
-import type { NockWalletSession } from "../nock/wallet.js";
 import {
   claimNockAction,
   resolvePreimage,
@@ -15,7 +14,6 @@ import {
 } from "./buyer.js";
 
 const PREIMAGE = new Uint8Array([1, 2, 3, 4]);
-const wallet = { pkh: "BUYERPKH" } as unknown as NockWalletSession;
 
 function makeSwap(overrides: Partial<SwapPublic> = {}): SwapPublic {
   return {
@@ -44,19 +42,10 @@ function claimDeps(): ClaimDeps {
 }
 
 describe("claimNockAction", () => {
-  it("requires a connected Iris wallet", async () => {
-    await expect(
-      claimNockAction(
-        { wallet: null, swap: makeSwap(), preimageJam: PREIMAGE, lockFirstName: "", gift: "" },
-        claimDeps()
-      )
-    ).rejects.toThrow("Connect Iris wallet first");
-  });
-
   it("requires a resolved preimage", async () => {
     await expect(
       claimNockAction(
-        { wallet, swap: makeSwap(), preimageJam: null, lockFirstName: "", gift: "" },
+        { swap: makeSwap(), preimageJam: null, lockFirstName: "", gift: "" },
         claimDeps()
       )
     ).rejects.toThrow("No preimage");
@@ -65,7 +54,7 @@ describe("claimNockAction", () => {
   it("requires a lockFirstName", async () => {
     await expect(
       claimNockAction(
-        { wallet, swap: makeSwap({ lockFirstName: undefined }), preimageJam: PREIMAGE, lockFirstName: "  ", gift: "" },
+        { swap: makeSwap({ lockFirstName: undefined }), preimageJam: PREIMAGE, lockFirstName: "  ", gift: "" },
         claimDeps()
       )
     ).rejects.toThrow("lockFirstName missing");
@@ -77,7 +66,7 @@ describe("claimNockAction", () => {
       new Error("Preimage does not match swap hNock")
     );
     await expect(
-      claimNockAction({ wallet, swap: makeSwap(), preimageJam: PREIMAGE, lockFirstName: "", gift: "" }, deps)
+      claimNockAction({ swap: makeSwap(), preimageJam: PREIMAGE, lockFirstName: "", gift: "" }, deps)
     ).rejects.toThrow("Preimage does not match swap hNock");
     expect(deps.claimNock).not.toHaveBeenCalled();
   });
@@ -86,14 +75,13 @@ describe("claimNockAction", () => {
     const deps = claimDeps();
     const swap = makeSwap();
     const { txId } = await claimNockAction(
-      { wallet, swap, preimageJam: PREIMAGE, lockFirstName: "", gift: "" },
+      { swap, preimageJam: PREIMAGE, lockFirstName: "", gift: "" },
       deps
     );
 
     expect(txId).toBe("tx-claim-123");
     expect(swap.nockClaimTxId).toBe("tx-claim-123");
     expect(deps.claimNock).toHaveBeenCalledWith({
-      wallet,
       lockFirstName: "LOCKFN",
       preimageJam: PREIMAGE,
       hNock: "HNOCK",

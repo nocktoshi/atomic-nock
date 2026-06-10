@@ -1,14 +1,13 @@
 import { DEFAULT_FEE_PER_WORD } from "../iris.js";
-import { getIrisWasm, initIrisWasm, type Lock, type Note } from "../iris.js";
+import { getIrisWasm, initIrisWasm, type Lock } from "../iris.js";
 import { Digest } from '@nockbox/iris-sdk/wasm'
 import {
   htlcLockRootDigest,
   htlcGiftOutputFirstName,
   giftOutputFirstNameFromLockOutputs,
 } from "./tx.js";
-import type { NockWalletSession } from "./wallet.js";
-import { signAndSendIrisTx } from "./wallet.js";
-import { fetchWalletNotes, pickLargestNote, noteNameKey } from "./balance.js";
+import { signAndSendIrisTx, type NockWalletSession } from "./wallet.js";
+import { fetchWalletNotes, pickLargestNote } from "./balance.js";
 import { runStep } from "../grpc.js";
 
 export interface LockNockResult {
@@ -29,8 +28,9 @@ export type LockNockPreview = {
   swapLockFirstNameWasLockRoot: boolean;
 };
 
-export async function lockNock(params: {
-  wallet: NockWalletSession;
+export async function lockNock(
+  wallet: NockWalletSession,
+  params: {
   /** Seller nockblocks wallet address (base58); must match swap `sellerPkh` after lock. */
   walletAddress: Digest;
   buyerPkh: Digest;
@@ -39,11 +39,12 @@ export async function lockNock(params: {
   refundHeight: bigint;
   /** Pre-lock swap JSON may omit this or wrongly set it to the lock root. */
   swapLockFirstName?: Digest;
-}): Promise<LockNockResult & { preview: LockNockPreview }> {
+  }
+): Promise<LockNockResult & { preview: LockNockPreview }> {
   const sellerPkh = params.walletAddress;
 
   const { notes, query } = await runStep("Fetch wallet balance", () =>
-    fetchWalletNotes(params.wallet, params.walletAddress)
+    fetchWalletNotes(wallet, params.walletAddress)
   );
 
   const { note: inputNote, assets } = await runStep(
@@ -108,7 +109,7 @@ export async function lockNock(params: {
       note_data: Iris.noteDataEmpty(),
       gift: String(params.gift),
       parent_hash: parentHash,
-    } as any;
+    } as never;
     spend.seed(htlcSeed);
     spend.computeRefund(false);
     if (!spend.isBalanced()) {
@@ -137,8 +138,7 @@ export async function lockNock(params: {
       );
     }
 
-    const inputKey = noteNameKey(inputNote);
-    const txId = await signAndSendIrisTx(params.wallet, builder, [inputNote]);
+    const txId = await signAndSendIrisTx(wallet, builder, [inputNote]);
     // parentHash was computed earlier in the step (line ~98) from the inputNote.
     // tempOuts is from the verification temp build in this step.
     // Find the output index of the gift for the birth source the buyer will need.

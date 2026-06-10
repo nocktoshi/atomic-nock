@@ -1,0 +1,122 @@
+/** Dashboard swap card with status badges and Open / Refund / Hide actions. */
+import type { SwapPublic } from "../swap.js";
+import type { Role, SwapStage, RefundInfo } from "../app/roles.js";
+import { impliedNockUsd } from "../market/price.js";
+import { short, useResolvedNock } from "./util.js";
+
+const NICKS_PER_NOCK = 65536;
+
+function nock(swap: SwapPublic): string {
+  return `${parseFloat((Number(swap.nockGift) / NICKS_PER_NOCK).toFixed(6))} NOCK`;
+}
+
+const STAGE_LABEL: Record<SwapStage, string> = {
+  created: "Created",
+  "nock-locked": "NOCK locked",
+  "usdc-locked": "USDC locked",
+  withdrawn: "USDC withdrawn",
+  claimed: "Claimed",
+  refunded: "Refunded",
+};
+
+export interface OverviewCardProps {
+  swap: SwapPublic;
+  role: Role;
+  status: SwapStage;
+  refund: RefundInfo;
+  onOpen(): void;
+  onRefund(): void;
+  onHide(): void;
+}
+
+export function SwapOverviewCard({
+  swap,
+  role,
+  status,
+  refund,
+  onOpen,
+  onRefund,
+  onHide,
+}: OverviewCardProps) {
+  const refundable = role === "buyer" ? refund.eth : refund.nock;
+  const implied = impliedNockUsd(swap);
+
+  const counterparty = role === "seller" ? swap.buyerPkh : swap.sellerPkh;
+  const counterLabel = role === "seller" ? "Buyer" : "Seller";
+  const counter = useResolvedNock(counterparty, short(counterparty, 6, 4));
+
+  return (
+    <div className={"swap-card overview" + (refundable ? " refundable" : "")}>
+      <button
+        type="button"
+        className="card-dismiss"
+        title="Hide this swap (local only — does not delete it)"
+        onClick={(e) => {
+          e.stopPropagation();
+          onHide();
+        }}
+      >
+        ×
+      </button>
+
+      <div className="swap-card-title">
+        <span>{role === "seller" ? "Selling NOCK" : "Buying NOCK"}</span>
+        <div className="swap-card-title-badges">
+          <span className="swap-badge">{STAGE_LABEL[status]}</span>
+          {refundable && <span className="refund-badge">Refund available</span>}
+        </div>
+      </div>
+
+      <div>
+        <div className="swap-card-row">
+          <span className="k">Swap ID</span>
+          <span className="v">{short(swap.hEvm, 8, 6)}</span>
+        </div>
+        <div className="swap-card-row">
+          <span className="k">NOCK</span>
+          <span className="v">{nock(swap)}</span>
+        </div>
+        <div className="swap-card-row">
+          <span className="k">USDC</span>
+          <span className="v">{swap.usdcAmount ? `${swap.usdcAmount} USDC` : "—"}</span>
+        </div>
+        {implied != null && (
+          <div className="swap-card-row">
+            <span className="k">Implied</span>
+            <span className="v">{`$${implied.toFixed(4)}/NOCK`}</span>
+          </div>
+        )}
+        <div className="swap-card-row">
+          <span className="k">{counterLabel}</span>
+          <span className="v" title={counter.title}>
+            {counter.text}
+          </span>
+        </div>
+      </div>
+
+      <div className="card-actions">
+        <button
+          type="button"
+          onClick={(e) => {
+            e.stopPropagation();
+            onOpen();
+          }}
+        >
+          Open
+        </button>
+        {refundable && (
+          <button
+            type="button"
+            className="refund-btn"
+            onClick={(e) => {
+              e.stopPropagation();
+              onRefund();
+            }}
+          >
+            {role === "buyer" ? "Refund USDC" : "Refund NOCK"}
+          </button>
+        )}
+      </div>
+    </div>
+  );
+}

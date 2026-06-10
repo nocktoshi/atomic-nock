@@ -6,15 +6,15 @@ import {
   htlcOrLock,
   htlcLockRootDigest,
 } from "./tx.js";
-import type { NockWalletSession } from "./wallet.js";
-import { signAndSendIrisTx } from "./wallet.js";
+import { signAndSendIrisTx, type NockWalletSession } from "./wallet.js";
 import {
   fetchNotesByFirstName,
   pickLargestNote,
 } from "./balance.js";
 
-export async function claimNock(params: {
-  wallet: NockWalletSession;
+export async function claimNock(
+  wallet: NockWalletSession,
+  params: {
   lockFirstName: Digest;
   preimageJam: Uint8Array;
   hNock: Digest;
@@ -27,7 +27,8 @@ export async function claimNock(params: {
   parentHash?: Digest;
   /** Output index of the HTLC gift note in the seller's lock tx (usually 0). */
   birthOutputIndex?: number;
-}): Promise<string> {
+  }
+): Promise<string> {
   await initIrisWasm();
   const Iris = await getIrisWasm();
   await initRoseWasm();
@@ -52,24 +53,26 @@ export async function claimNock(params: {
     );
   }
 
-  if (params.wallet.pkh !== params.buyerPkh) {
+  if (wallet.pkh !== params.buyerPkh) {
     throw new Error(
-      `Connected Iris pkh (${params.wallet.pkh}) does not match swap buyerPkh (${params.buyerPkh}) — ` +
+      `Connected Iris pkh (${wallet.pkh}) does not match swap buyerPkh (${params.buyerPkh}) — ` +
       `only the designated buyer can claim. Make sure you are connected with the correct Iris account.`
     );
   }
 
   const { notes: lockNotes, height } = await runStep("Fetch HTLC note", () =>
-    fetchNotesByFirstName(params.wallet, params.lockFirstName)
+    fetchNotesByFirstName(wallet, params.lockFirstName)
   );
   if (!lockNotes.length) {
     throw new Error(`No note at lock first name — wait for seller lock to confirm.\n Block height: ${height}\n Node behind?`);
   }
 
-  let { note: htlcNote, assets: htlcAssets } = await runStep(
+  const picked = await runStep(
     "Select HTLC note",
     async () => pickLargestNote(lockNotes, BigInt(params.gift.toString()))
   );
+  let htlcNote = picked.note;
+  const htlcAssets = picked.assets;
 
   // Inject the birth source/parent so that when we build the claim spend, the node's
   // "spend first name does not match parent note first name" check can succeed.
@@ -80,8 +83,12 @@ export async function claimNock(params: {
   // Dev convenience: you can also set these in the console before Claim:
   //   window.__forceParentHash = "6ASqhtgxt...";
   //   window.__forceBirthOutputIndex = 1;
-  const effParent = (globalThis as any).__forceParentHash || params.parentHash;
-  const effIdx = (globalThis as any).__forceBirthOutputIndex ?? params.birthOutputIndex;
+  const debug = globalThis as typeof globalThis & {
+    __forceParentHash?: string;
+    __forceBirthOutputIndex?: number;
+  };
+  const effParent = debug.__forceParentHash || params.parentHash;
+  const effIdx = debug.__forceBirthOutputIndex ?? params.birthOutputIndex;
 
   if (effParent) {
     const idx = (typeof effIdx === 'number' ? effIdx : 0);
@@ -95,7 +102,7 @@ export async function claimNock(params: {
     // "untagged enum Note" when passed to SpendBuilder / the builder, causing
     // "data did not match any variant of untagged enum Note".
     const birthSrc = { Parent: { parent: effParent, index: idx } };
-    const n = htlcNote as any;
+    const n = htlcNote as Note & Record<string, unknown>;
     n.source = birthSrc;
     n.parent_hash = effParent;
 
@@ -131,7 +138,7 @@ export async function claimNock(params: {
   await runStep("Build HTLC claim spend", async () => {
     // Prefer the real OR lock from the fetched note (which has the correct Pkh + Hax branch as set on chain).
     // Fallback to constructed (which now uses high-level ctors after bump).
-    let orLock = (htlcNote as any).lock as Lock;
+    let orLock = (htlcNote as Note & { lock?: Lock }).lock;
     if (!orLock) {
       console.debug('building htlcOrLock')
       orLock = await htlcOrLock(
@@ -187,7 +194,7 @@ export async function claimNock(params: {
   // stale if the user switched accounts in Iris after connect but before/during the claim flow.
   // If the active key cannot satisfy the Pkh in the claim branch we built, the extension will
   // refuse with exactly the error you saw ("The note is not fully unlocked. ... Pkh { sig_of: ... }").
-  const connectedNow = params.wallet.pkh;
+  const connectedNow = wallet.pkh;
   if (connectedNow !== params.buyerPkh) {
     throw new Error(
       `Connected Iris pkh (${connectedNow}) does not match the buyerPkh required by the ` +
@@ -199,6 +206,6 @@ export async function claimNock(params: {
   console.debug("claim branch Pkh requirement matches current session pkh; extension should be able to provide the sig (hax preimage already embedded).");
 
   const inputNotesForTx = [htlcNote].filter(Boolean) as Note[];
-  return signAndSendIrisTx(params.wallet, tx, inputNotesForTx);
+  return signAndSendIrisTx(wallet, tx, inputNotesForTx);
 }
 

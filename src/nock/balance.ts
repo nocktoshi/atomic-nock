@@ -1,8 +1,9 @@
 import { base58 } from "@scure/base";
 import { getIrisWasm, initIrisWasm, pkhSingle, type Note, type Digest  } from "../iris.js";
 import { assertBase58Digest, BASE58_DIGEST_RE } from "./tx.js";
-import type { NockWalletSession } from "./wallet.js";
 import { Nicks } from '@nockbox/iris-sdk/wasm'
+import type { NockWalletSession } from "./wallet.js";
+
 
 const NICKS_PER_NOCK = 65536n;
 
@@ -51,7 +52,7 @@ function assertNoteName(note: Note, context: string): void {
   assertBase58Digest(`${context} name.first`, first);
   assertBase58Digest(`${context} name.last`, last);
   // note_data keys are Digest (ZMap<Digest, NoteData>)
-  const nd = (note as any)?.note_data;
+  const nd = (note as Note & { note_data?: Record<string, unknown> }).note_data;
   if (nd && typeof nd === "object") {
     for (const k of Object.keys(nd)) {
       if (BASE58_DIGEST_RE.test(k)) {
@@ -143,13 +144,13 @@ export async function firstNameFromWalletKey(walletKey: string): Promise<Digest>
  * the RPC does not return a height (node still syncing, etc.).
  */
 export async function fetchCurrentBlockHeight(
-  session: NockWalletSession
+  wallet: NockWalletSession
 ): Promise<bigint | undefined> {
-  const key = session.address ?? session.pkh;
+  const key = wallet.address ?? wallet.pkh;
   if (!key) return undefined;
   try {
     const firstName = await firstNameFromWalletKey(key);
-    const balance = await session.grpc.getBalanceByFirstName(firstName);
+    const balance = await wallet.grpc.getBalanceByFirstName(firstName);
     const h = balance?.height?.value;
     if (h == null) return undefined;
     return BigInt(h);
@@ -160,31 +161,31 @@ export async function fetchCurrentBlockHeight(
 
 /** Balance at a note first name (e.g. HTLC output `lockFirstName` from swap JSON). */
 export async function fetchNotesByFirstName(
-  session: NockWalletSession,
+  wallet: NockWalletSession,
   firstName: Digest
-): Promise<{ notes: BalanceEntry[], height?: string }> {
-  const balance = await session.grpc.getBalanceByFirstName(firstName);
+): Promise<{ notes: BalanceEntry[]; height?: string }> {
+  const balance = await wallet.grpc.getBalanceByFirstName(firstName);
   const notes = await parseBalanceEntries(balance?.notes ?? []);
   console.debug('found notes:', notes)
   return { notes, height: balance?.height?.value };
 }
 
 export async function fetchWalletNotes(
-  session: NockWalletSession,
+  wallet: NockWalletSession,
   overrideAddress?: string
 ): Promise<{ notes: BalanceEntry[]; query: string }> {
   const tried: string[] = [];
   const walletKeys = uniqueNonEmpty([
     overrideAddress,
-    session.address,
-    session.pkh,
+    wallet.address,
+    wallet.pkh,
   ]);
 
   for (const key of walletKeys) {
     const firstName = await firstNameFromWalletKey(key);
     tried.push(`firstName:${firstName.slice(0, 12)}…`);
     try {
-      const balance = await session.grpc.getBalanceByFirstName(firstName);
+      const balance = await wallet.grpc.getBalanceByFirstName(firstName);
       const notes = await parseBalanceEntries(balance?.notes ?? []);
       if (notes.length > 0) {
         console.debug(`Balance: ${notes.length} note(s) via firstName ${firstName.slice(0, 12)}…`);
