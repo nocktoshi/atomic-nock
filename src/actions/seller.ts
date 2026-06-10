@@ -60,9 +60,10 @@ export async function generateSwapAction(
 ): Promise<{ swap: SwapPublic; preimageJam: Uint8Array; refundHeight: bigint }> {
   const d = deps ?? (await defaultGenerateSwapDeps());
 
+  // buyerPkh is optional: an OPEN swap is posted with no buyer and the buyer
+  // commits later via the shared link (their pkh is set from their session).
   const buyerPkh = input.buyerPkh.trim();
-  if (!buyerPkh) throw new Error("Enter buyer Nockchain pkh (from buyer's Iris wallet)");
-  d.assertBase58Digest("buyerPkh", buyerPkh);
+  if (buyerPkh) d.assertBase58Digest("buyerPkh", buyerPkh);
 
   const walletAddr = input.walletAddress.trim();
   if (!d.isPlausibleWalletAddress(walletAddr)) {

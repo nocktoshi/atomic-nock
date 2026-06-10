@@ -1,0 +1,25 @@
+# Local dev config — fully isolated from production.
+#
+#   npm --prefix worker run dev      (or: cd worker && wrangler dev -c wrangler.dev.toml)
+#
+# `wrangler dev` runs in LOCAL mode by default: the KV namespace below is
+# simulated on disk under worker/.wrangler/state and NEVER touches the deployed
+# production namespace (5851f03bf8614f54a6228a5aa18c6e65). The dummy id is only a
+# local label. Do NOT pass --remote unless you first create a real dev namespace
+# (`wrangler kv namespace create SWAPS_DEV`) and paste its id here.
+name = "atomicnock-dev"
+main = "src/index.ts"
+compatibility_date = "2024-11-01"
+
+[[kv_namespaces]]
+binding = "SWAPS"
+id = "0000000000000000000000000000dead"
+
+# Bundle the rose-wasm verifier (server-side signature verification). No size
+# limit in local dev.
+[[rules]]
+type = "CompiledWasm"
+globs = ["**/*.wasm"]
+fallthrough = true
+
+# SESSION_SECRET is read from worker/.dev.vars in dev (see that file).

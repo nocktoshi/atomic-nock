@@ -9,10 +9,16 @@
 import { createPublicClient, http } from "viem";
 import { normalize } from "viem/ens";
 import { mainnet } from "viem/chains";
+import { ETH_RPC_URL } from "../config.js";
 
 const NOCKNAMES_API = "https://api.nocknames.com";
 
-const ensClient = createPublicClient({ chain: mainnet, transport: http() });
+// ENS lookups need a CORS-friendly mainnet RPC; retries off so a failed/no-ENS
+// lookup doesn't spam the console (callers fall back to the raw address).
+const ensClient = createPublicClient({
+  chain: mainnet,
+  transport: http(ETH_RPC_URL || undefined, { retryCount: 0 }),
+});
 
 export interface ResolvedAddress {
   address: string;

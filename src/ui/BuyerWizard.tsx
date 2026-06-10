@@ -1,6 +1,5 @@
-/** Buyer (USDC → NOCK) wizard — React port of buyer-wizard.ts. */
+/** Buyer (USDC → NOCK) wizard — React port of buyer-wizard.ts, with open-swap claim. */
 import {
-  useCallback,
   useEffect,
   useMemo,
   useRef,
@@ -8,24 +7,29 @@ import {
   type Dispatch,
   type SetStateAction,
 } from "react";
-import type { Hex } from "viem";
+import type { Address, Hex } from "viem";
 import type { SwapPublic, DraftSwap } from "../swap.js";
+import type { NockWalletSession } from "../nock/wallet.js";
 import type { SwapRepository } from "../app/repo/swap-repo.js";
 import { lockUsdcAction, resolvePreimage } from "../actions/buyer.js";
-import type { SessionValue } from "./session.js";
+import { verifyNockLockConfirmed } from "../nock/balance.js";
 import { getSwapRepository } from "../app/repo/swap-repo.js";
 import { swapStatus } from "../app/roles.js";
-import { useSession } from "./session.js";
+import { useSession, type SessionValue } from "./session.js";
 import { useLog, LogBox, type LogApi } from "./log.js";
 import { Wizard, type WizardStep } from "./Wizard.js";
 import { SwapCard } from "./SwapCard.js";
-import { SwapWalletBanner, useSwapWalletStatus } from "./SwapWalletGate.js";
-import { NICKS_PER_NOCK, nicksToNock, short, useResolvedNock } from "./util.js";
+import { nicksToNock, short, useResolvedNock } from "./util.js";
+
+/** On-chain state of the seller's NOCK lock, as the buyer verifies it. */
+type LockCheck = "waiting" | "verifying" | "confirmed" | "mismatch";
 
 /** Shared context threaded into every buyer step (body + onNext). */
 interface BuyerCtx {
   swap: DraftSwap;
   setSwap: Dispatch<SetStateAction<DraftSwap>>;
+  nock: NockWalletSession;
+  evm: Address;
   repo: SwapRepository;
   log: LogApi["log"];
   withdrawTx: string;
@@ -36,58 +40,93 @@ interface BuyerCtx {
   ensurePreimage(tx: Hex | ""): Promise<Uint8Array>;
   setEvmSwapId(id: Hex): void;
   claimNockAction: SessionValue["claimNockAction"];
+  /** On-chain state of the seller's NOCK lock (gates locking USDC). */
+  lockCheck: LockCheck;
 }
 
-function stepForSwap(swap: DraftSwap): number {
+/** Initial step. An unclaimed open swap (or one claimed by someone else) starts
+ *  at the claim step; otherwise jump to the buyer's current progress. */
+function stepForSwap(swap: DraftSwap, myPkh: string | undefined): number {
   if (!swap.hEvm) return 0;
+  const mine = !!swap.buyerPkh && swap.buyerPkh === myPkh;
+  if (!mine) return 0; // must claim (or it's not ours)
   const st = swapStatus(swap as SwapPublic);
-  if (st === "claimed" || st === "refunded") return 3;
-  if (st === "withdrawn") return 2;
-  if (st === "usdc-locked") return 1;
-  return 0;
+  if (st === "claimed" || st === "refunded") return 4;
+  if (st === "withdrawn") return 3;
+  if (st === "usdc-locked") return 2;
+  return 1; // claimed, lock USDC next
 }
 
 // --- Step bodies (module-level so inputs never remount) -----------------------
 
-function LockBody({ swap }: BuyerCtx) {
-  const giftNock =
-    swap?.nockGift != null ? Number(swap.nockGift) / NICKS_PER_NOCK : NaN;
-  const usdcNum = parseFloat(swap?.usdcAmount ?? "");
-  const pricePerNock =
-    Number.isFinite(giftNock) && giftNock > 0 && Number.isFinite(usdcNum) && usdcNum > 0
-      ? usdcNum / giftNock
-      : null;
-  const buyLabel = swap?.nockGift != null ? `${nicksToNock(swap.nockGift)} NOCK` : "—";
-  const payLabel = Number.isFinite(usdcNum) ? `$${usdcNum.toFixed(2)}` : "—";
-
+function ClaimSwapBody({ swap, evm, nock }: BuyerCtx) {
+  const claimedByOther = !!swap?.buyerPkh && swap.buyerPkh !== nock.pkh;
+  const giftNock = swap?.nockGift != null ? nicksToNock(swap.nockGift) : "—";
+  const seller = useResolvedNock(swap?.sellerPkh, short(swap?.sellerPkh, 8, 6));
   return (
     <div>
       <div className="swap-order-summary">
         <div className="swap-card-row">
-          <span className="k">Buy</span>
-          <span className="v">{buyLabel}</span>
+          <span className="k">Seller</span>
+          <span className="v" title={seller.title ?? swap?.sellerPkh}>
+            {seller.text}
+          </span>
         </div>
         <div className="swap-card-row">
-          <span className="k">Pay</span>
-          <span className="v">{payLabel}</span>
+          <span className="k">You receive</span>
+          <span className="v">{giftNock} NOCK</span>
         </div>
-        {pricePerNock != null && (
-          <div className="swap-card-row">
-            <span className="k">Price</span>
-            <span className="v">${pricePerNock.toFixed(4)} / NOCK</span>
-          </div>
-        )}
-        {swap?.sellerEth && (
-          <div className="swap-card-row">
-            <span className="k">Seller</span>
-            <span className="v" title={swap.sellerEth}>
-              {swap.sellerEth}
-            </span>
-          </div>
-        )}
+        <div className="swap-card-row">
+          <span className="k">You pay</span>
+          <span className="v">{swap?.usdcAmount ? `$${swap.usdcAmount}` : "—"}</span>
+        </div>
       </div>
+      {claimedByOther ? (
+        <p className="fee-disclaimer">
+          This swap has already been claimed by another wallet.
+        </p>
+      ) : (
+        <p className="hint">
+          Claiming commits your wallets to this swap: NOCK is sent to your Iris
+          address and you'll lock USDC from {short(evm, 6, 4)}. No addresses to type.
+        </p>
+      )}
+    </div>
+  );
+}
+
+function LockBody({ swap, lockCheck }: BuyerCtx) {
+  return (
+    <div>
+      <div className="swap-order-summary">
+        <div className="swap-card-row">
+          <span className="k">You pay</span>
+          <span className="v">{swap?.usdcAmount ? `$${swap.usdcAmount}` : "—"}</span>
+        </div>
+        <div className="swap-card-row">
+          <span className="k">You receive</span>
+          <span className="v">{swap?.nockGift != null ? `${nicksToNock(swap.nockGift)} NOCK` : "—"}</span>
+        </div>
+      </div>
+      {lockCheck === "confirmed" ? (
+        <p className="preimage-status ok">
+          ✓ Seller's NOCK lock is confirmed on-chain and locked to your wallet — safe to lock USDC.
+        </p>
+      ) : lockCheck === "mismatch" ? (
+        <p className="log error">
+          ⚠️ The on-chain NOCK lock does NOT match this swap's terms. Do not lock USDC —
+          ask the seller to re-lock, or walk away.
+        </p>
+      ) : (
+        <p className="fee-disclaimer">
+          {lockCheck === "verifying"
+            ? "Verifying the seller's NOCK lock on-chain… you can lock USDC once it's confirmed."
+            : "Waiting for the seller to lock NOCK on Nockchain. Don't lock USDC until it's confirmed on-chain."}
+        </p>
+      )}
       <p className="fee-disclaimer">
-        Fee: a 0.5% protocol fee is paid by the seller.
+        Fee: a 0.5% protocol fee is paid by the seller (deducted from their USDC
+        withdrawal). You lock and receive exactly the amounts shown.
       </p>
     </div>
   );
@@ -104,7 +143,7 @@ function PreimageBody({
     <div>
       <p className={"preimage-status" + (preimageReady ? " ok" : "")}>
         {preimageReady
-          ? `Preimage revealed: (${preimageLen} bytes).`
+          ? `Preimage ready (${preimageLen} bytes).`
           : hasWithdraw
             ? "Seller has withdrawn — loading the preimage from Base automatically…"
             : "After the seller withdraws USDC, the preimage loads from Base automatically."}
@@ -120,32 +159,17 @@ function PreimageBody({
   );
 }
 
-function ClaimBody({ swap, preimageReady, preimageLen, hasWithdraw }: BuyerCtx) {
-  const amountLabel =
-    swap?.nockGift != null ? `${nicksToNock(swap.nockGift)} NOCK` : "—";
-  const seller = swap?.sellerPkh;
-  const sellerDisplay = useResolvedNock(seller, seller ? short(seller) : "—");
-
+function ClaimNockBody({ swap, preimageReady, preimageLen, hasWithdraw }: BuyerCtx) {
   return (
     <div>
-      <div className="swap-order-summary">
-        <div className="swap-card-row">
-          <span className="k">From</span>
-          <span className="v" title={sellerDisplay.title ?? seller}>
-            {seller ? sellerDisplay.text : "—"}
-          </span>
-        </div>
-        <div className="swap-card-row">
-          <span className="k">Amount</span>
-          <span className="v">{amountLabel}</span>
-        </div>
-      </div>
-      {!swap?.lockFirstName && (
-        <p className="hint">Waiting for the seller to lock NOCK on Nockchain.</p>
-      )}
+      <p className="hint">
+        {swap?.lockFirstName
+          ? "Ready to claim the locked NOCK with the revealed preimage."
+          : "Waiting for the seller to lock NOCK (lockFirstName not set yet)."}
+      </p>
       <p className={"preimage-status" + (preimageReady ? " ok" : "")}>
         {preimageReady
-          ? `Preimage revealed: (${preimageLen} bytes).`
+          ? `Preimage ready (${preimageLen} bytes).`
           : hasWithdraw
             ? "Loading preimage from Base automatically…"
             : "Preimage will load once the seller withdraws USDC on Base."}
@@ -154,41 +178,54 @@ function ClaimBody({ swap, preimageReady, preimageLen, hasWithdraw }: BuyerCtx) 
   );
 }
 
-function DoneBody({ swap }: BuyerCtx) {
-  const amountLabel =
-    swap?.nockGift != null ? `${nicksToNock(swap.nockGift)} NOCK` : "—";
-  const txId = swap.nockClaimTxId;
-
+function DoneBody() {
   return (
     <div>
-      <p className="swap-complete-heading">Good Job!</p>
-      <p className="swap-complete-heading">One step closer to NOCKMILIO...</p>
-      
-      <div className="swap-order-summary">
-        <div className="swap-card-row">
-          <span className="k">Amount received</span>
-          <span className="v">{amountLabel}</span>
-        </div>
-        {txId && (
-          <div className="swap-card-row">
-            <span className="k">Transaction</span>
-            <span className="v" title={txId}>
-              {txId}
-            </span>
-          </div>
-        )}
-      </div>
+      <p>🎉🎉 Swap complete. 🎉🎉</p>
     </div>
   );
 }
 
 const steps: WizardStep<BuyerCtx>[] = [
   {
+    id: "claim-swap",
+    title: "Claim this swap",
+    nextLabel: "Claim swap",
+    Body: ClaimSwapBody,
+    canAdvance: ({ swap, evm }) => !swap?.buyerPkh && !!evm,
+    async onNext({ swap, setSwap, evm, repo, log }) {
+      if (!swap?.hEvm) throw new Error("No swap selected");
+      if (!evm) throw new Error("Connect MetaMask (Base) to claim — you lock USDC from it.");
+      const committed = await repo.claim(swap.hEvm, evm);
+      setSwap(committed);
+      log("Swap claimed — you're committed as the buyer. Now lock USDC.", true);
+    },
+  },
+  {
     id: "lock-usdc",
     title: "Lock USDC",
     nextLabel: "Lock USDC",
     Body: LockBody,
-    async onNext({ swap, setSwap, repo, log, setEvmSwapId }) {
+    // Only lock USDC once the seller's NOCK lock is confirmed on-chain.
+    canAdvance: ({ lockCheck }) => lockCheck === "confirmed",
+    async onNext({ swap, setSwap, repo, log, setEvmSwapId, nock }) {
+      if (!swap?.lockFirstName || swap.nockGift == null) {
+        throw new Error("Wait for the seller to lock NOCK before locking your USDC.");
+      }
+      // Re-verify on-chain right before locking — the gate could be stale.
+      const { ok, reason } = await verifyNockLockConfirmed(nock, {
+        lockFirstName: swap.lockFirstName,
+        lockRoot: swap.lockRoot,
+        parentHash: swap.parentHash,
+        hNock: swap.hNock!,
+        buyerPkh: nock.pkh,
+        sellerPkh: swap.sellerPkh!,
+        refundHeight: swap.nockRefundHeight!,
+        gift: swap.nockGift,
+      });
+      if (!ok) {
+        throw new Error(`Won't lock USDC — ${reason ?? "NOCK lock not verified on-chain"}.`);
+      }
       const { swapId, lockTxHash, swap: locked } = await lockUsdcAction({
         swap: swap as SwapPublic,
       });
@@ -209,11 +246,14 @@ const steps: WizardStep<BuyerCtx>[] = [
     },
   },
   {
-    id: "claim",
+    id: "claim-nock",
     title: "Claim NOCK",
     nextLabel: "Claim NOCK",
-    Body: ClaimBody,
+    Body: ClaimNockBody,
+    // Needs the seller's lock (lockFirstName) and the loaded preimage.
+    canAdvance: ({ swap, preimageReady }) => !!swap?.lockFirstName && preimageReady,
     async onNext({ swap, setSwap, repo, log, withdrawTx, ensurePreimage, claimNockAction }) {
+      if (!swap) throw new Error("No swap selected");
       const full = swap as SwapPublic;
       const preimageJam = await ensurePreimage(withdrawTx.trim() as Hex | "");
       const { txId, swap: claimed } = await claimNockAction({
@@ -224,12 +264,12 @@ const steps: WizardStep<BuyerCtx>[] = [
       });
       setSwap(claimed);
       await repo.put(claimed);
-      log(`Swap complete — NOCK claimed.\nbroadcast txId ${txId}`, true);
+      log(`NOCK claimed (Iris signed).\nTransaction ID: ${txId}`, true);
     },
   },
   {
     id: "done",
-    title: "🎉🎉 Swap complete. 🎉🎉",
+    title: "Complete",
     terminal: true,
     Body: DoneBody,
   },
@@ -246,18 +286,19 @@ export function BuyerWizard({
   const repo = useMemo(() => getSwapRepository(), []);
   const { state: logState, log, logErr } = useLog();
 
-  const [index, setIndex] = useState(() => stepForSwap(swap));
+  const [index, setIndex] = useState(() => stepForSwap(swap, nock?.pkh));
   const [withdrawTx, setWithdrawTx] = useState("");
   const [preimageReady, setPreimageReady] = useState(false);
   const [preimageLen, setPreimageLen] = useState(0);
+  const [lockCheck, setLockCheck] = useState<LockCheck>("waiting");
 
   const preimageRef = useRef<Uint8Array | null>(null);
   const evmSwapIdRef = useRef<Hex | null>(null);
   const autoLoadTried = useRef(false);
 
-  const ensurePreimage = useCallback(async (tx: Hex | ""): Promise<Uint8Array> => {
+  async function ensurePreimage(tx: Hex | ""): Promise<Uint8Array> {
     if (preimageRef.current) return preimageRef.current;
-    if (!swap.hEvm) throw new Error("No swap selected");
+    if (!swap) throw new Error("No swap selected");
     const { preimageJam } = await resolvePreimage({
       swap: swap as SwapPublic,
       cached: preimageRef.current,
@@ -265,20 +306,87 @@ export function BuyerWizard({
       swapId: evmSwapIdRef.current,
     });
     preimageRef.current = preimageJam;
-    setPreimageLen(preimageJam.length);
     setPreimageReady(true);
+    setPreimageLen(preimageJam.length);
     return preimageJam;
-  }, [swap]);
+  }
+
+  const stepId = steps[index]?.id;
 
   // Entry: show wallet status in the log.
   useEffect(() => {
     if (nock && evm) log(`Iris: ${nock.pkh.slice(0, 16)}…\nMetaMask: ${evm}`, true);
-  }, [nock, evm, log]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
-  // Auto-load the preimage once the seller has withdrawn (steps 2 and 3).
+  // On a direct /swap/:id load the initial step is computed before the wallet has
+  // connected (pkh unknown), so an already-claimed buyer wrongly lands on the
+  // claim step. Reposition once, when the wallet's pkh first becomes available.
+  const positioned = useRef(false);
+  useEffect(() => {
+    if (positioned.current || !nock?.pkh) return;
+    positioned.current = true;
+    setIndex(stepForSwap(swap, nock.pkh));
+  }, [nock?.pkh, swap]);
+
+  // On the Lock-USDC step, poll the swap for the seller's lock and verify the
+  // on-chain HTLC note is locked under this swap's exact conditions before the
+  // buyer risks any USDC. Stops once confirmed or a mismatch is detected.
+  useEffect(() => {
+    if (stepId !== "lock-usdc" || lockCheck === "confirmed" || lockCheck === "mismatch") {
+      return;
+    }
+    if (!nock) return;
+    const id = swap?.hEvm;
+    if (!id) return;
+    let alive = true;
+    const tick = async () => {
+      try {
+        const fresh = await repo.get(id);
+        if (!alive || !fresh) return;
+        if (!fresh.lockFirstName) {
+          setLockCheck("waiting");
+          return;
+        }
+        setLockCheck("verifying");
+        const { ok, reason } = await verifyNockLockConfirmed(nock, {
+          lockFirstName: fresh.lockFirstName,
+          lockRoot: fresh.lockRoot,
+          parentHash: fresh.parentHash,
+          hNock: fresh.hNock,
+          buyerPkh: nock.pkh,
+          sellerPkh: fresh.sellerPkh,
+          refundHeight: fresh.nockRefundHeight,
+          gift: fresh.nockGift,
+        });
+        if (!alive) return;
+        if (ok) {
+          setSwap(fresh);
+          setLockCheck("confirmed");
+          log("Seller's NOCK lock confirmed on-chain — safe to lock USDC.", true);
+        } else if (reason?.includes("does not match")) {
+          // A real mismatch (note exists but the lock root is wrong) — stop and warn.
+          setLockCheck("mismatch");
+          logErr(new Error(`NOCK lock mismatch — do NOT lock USDC. ${reason}`));
+        }
+        // else: not on-chain yet → stay "verifying", keep polling.
+      } catch {
+        /* transient — keep polling */
+      }
+    };
+    void tick();
+    const t = setInterval(() => void tick(), 6000);
+    return () => {
+      alive = false;
+      clearInterval(t);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [stepId, lockCheck, swap?.hEvm, nock]);
+
+  // Auto-load the preimage once the seller has withdrawn (preimage / claim-nock steps).
   useEffect(() => {
     if (
-      (index === 1 || index === 2) &&
+      (stepId === "load-preimage" || stepId === "claim-nock") &&
       !preimageRef.current &&
       swap?.usdcWithdrawTxHash &&
       !autoLoadTried.current
@@ -288,13 +396,35 @@ export function BuyerWizard({
         .then(() => log("Preimage loaded automatically from Base.", true))
         .catch((e) => logErr(e));
     }
-  }, [index, swap, ensurePreimage, log, logErr]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [stepId, swap]);
 
-  const walletStatus = useSwapWalletStatus(swap);
+  // Terminal step logs completion.
+  useEffect(() => {
+    if (stepId === "done") log("Swap complete — NOCK claimed.", true);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [stepId]);
+
+  // Guard: both wallets must be connected before the form is useful.
+  if (!nock || !evm) {
+    const missing = [!nock && "Iris (Nockchain)", !evm && "MetaMask (Base)"]
+      .filter(Boolean)
+      .join(" and ");
+    return (
+      <>
+        <h2 className="flow-title">Buyer (USDC → NOCK)</h2>
+        <p className="hint">
+          Connect {missing} using the buttons above to participate in a swap.
+        </p>
+      </>
+    );
+  }
 
   const ctx: BuyerCtx = {
     swap,
     setSwap,
+    nock,
+    evm,
     repo,
     log,
     withdrawTx,
@@ -307,26 +437,22 @@ export function BuyerWizard({
       evmSwapIdRef.current = id;
     },
     claimNockAction,
+    lockCheck,
   };
 
   return (
     <>
-      <h2 className="flow-title">Buy $NOCK</h2>
-      <SwapWalletBanner status={walletStatus} connectHint="participate in a swap" />
+      <h2 className="flow-title">Buyer (USDC → NOCK)</h2>
       <Wizard
         steps={steps}
         index={index}
         ctx={ctx}
         onIndexChange={setIndex}
         onError={logErr}
-        actionsEnabled={walletStatus.canAct}
       />
       <LogBox state={logState} />
-      {swap.hEvm && (
-        <SwapCard
-          swap={swap as SwapPublic}
-          json={JSON.stringify({ swapId: swap.hEvm })}
-        />
+      {swap?.hEvm && (
+        <SwapCard swap={swap as SwapPublic} json={JSON.stringify({ swapId: swap.hEvm })} />
       )}
     </>
   );

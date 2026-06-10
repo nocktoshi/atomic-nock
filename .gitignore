@@ -1,7 +1,13 @@
 node_modules/
 dist/
 .env
+.env.local
 .DS_Store
+
+# Worker dev: local secrets + simulated KV state (never commit)
+.dev.vars
+**/.wrangler/
+worker/dist/
 
 contracts/out/
 contracts/cache/

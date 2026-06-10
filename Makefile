@@ -1,15 +1,30 @@
-IRIS_REPO ?= vendor/iris-rs
-IRIS_WASM ?= $(IRIS_REPO)/crates/iris-wasm
-WASM_OUT ?= web/public/pkg
-BASE_RPC_URL ?= https://mainnet.base.org
+.PHONY: install dev build test worker-dev worker-test worker-deploy \
+        forge-build forge-test deploy-base deploy-base-dry verify-base
 
-REPO_ROOT := $(abspath $(dir $(lastword $(MAKEFILE_LIST))))
-
-.PHONY: wasm envoy envoy-local envoy-docker dev deploy-base deploy-base-dry forge-build forge-test verify-base
+# --- web app ---------------------------------------------------------------
+install:
+	npm install
 
 dev:
-	cd web && npm run dev
+	npm run dev
 
+build:
+	npm run build
+
+test:
+	npm test
+
+# --- swap API worker (Cloudflare); run `make worker-dev` alongside `make dev` ---
+worker-dev:
+	npm --prefix worker run dev
+
+worker-test:
+	npm --prefix worker run test
+
+worker-deploy:
+	npm --prefix worker run deploy
+
+# --- contracts (Foundry / Base) --------------------------------------------
 forge-build:
 	cd contracts && forge build
 
@@ -50,6 +65,3 @@ deploy-base-dry:
 	@set -a && . ./.env && set +a && \
 	 cd contracts && forge script script/Deploy.s.sol:Deploy \
 	   --rpc-url "$${BASE_RPC_URL:-https://mainnet.base.org}" -vvv
-
-install:
-	cd web && npm install

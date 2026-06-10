@@ -1,4 +1,4 @@
-import { KV_URL, KV_TOKEN } from "../../config.js";
+import { KV_URL } from "../../config.js";
 import type { KvStore } from "./kv.js";
 import { MemoryKvStore } from "./memory-kv.js";
 import { CloudflareKvStore } from "./cloudflare-kv.js";
@@ -17,7 +17,8 @@ let instance: KvStore | null = null;
 export function getKvStore(): KvStore {
   if (!instance) {
     if (KV_URL) {
-      instance = new CloudflareKvStore(KV_URL, KV_TOKEN || undefined);
+      // Reads only — writes go through the authenticated SwapApi (swap-api.ts).
+      instance = new CloudflareKvStore(KV_URL);
     } else {
       if (import.meta.env.DEV) {
         console.warn(

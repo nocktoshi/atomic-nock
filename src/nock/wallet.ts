@@ -86,11 +86,19 @@ export function ensureHaxPreimagesOnSpendWitnesses(tx: NockchainTx): void {
   }
 }
 
+/** Raw response of `nock_signMessage` (serialized across the extension boundary). */
+export type RawSignMessageResponse = {
+  signature: unknown;
+  publicKey: unknown;
+};
+
 export type NockWalletProvider = {
   _isIrisWrapper?: boolean;
   connect(): Promise<{ pkh?: string; address?: string }>;
   /** API 1.0 — signs native `NockchainTx` (sign-only; we broadcast via gRPC). */
   signTx(params: IrisSignTxParams): Promise<NockchainTx>;
+  /** API 1.0 — signs an arbitrary message (used for server sign-in). */
+  signMessage(message: string): Promise<RawSignMessageResponse>;
 };
 
 export type NockWalletSession = {
@@ -227,6 +235,18 @@ function createIrisProvider(nockchain: NonNullable<Window["nockchain"]>): NockWa
           return signed as NockchainTx;
         }
         throw new Error("Iris nock_signTx returned no signed transaction");
+      } catch (err) {
+        throw new Error(formatWalletError(err), { cause: err });
+      }
+    },
+    async signMessage(message) {
+      try {
+        return await irisRequest<RawSignMessageResponse>(nockchain, {
+          method: "nock_signMessage",
+          params: { message },
+          api: IRIS_RPC_API_V1,
+          timeout: 120_000,
+        });
       } catch (err) {
         throw new Error(formatWalletError(err), { cause: err });
       }

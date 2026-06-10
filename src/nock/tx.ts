@@ -95,6 +95,12 @@ export async function htlcGiftOutputFirstName(params: {
   refundHeight: bigint;
   giftNicks: bigint;
   inputNote: Note;
+  /** Override the gift output's parent_hash (default: hash of inputNote). The
+   *  output first name depends on this, not on the input note's identity — so a
+   *  verifier can recompute it with any input note + the seller's parentHash. */
+  parentHash?: Digest;
+  /** Pkh the input note is locked to (default: sellerPkh). */
+  inputPkh?: Digest;
 }): Promise<Digest> {
   await initIrisWasm();
   const Iris = await getIrisWasm();
@@ -106,9 +112,9 @@ export async function htlcGiftOutputFirstName(params: {
     params.refundHeight
   );
 
-  const parentHash = Iris.noteHash(params.inputNote);
+  const parentHash = params.parentHash ?? Iris.noteHash(params.inputNote);
   const inputLock = lockFromList([
-    Iris.spendConditionNewPkh(pkhSingle(params.sellerPkh as never)),
+    Iris.spendConditionNewPkh(pkhSingle((params.inputPkh ?? params.sellerPkh) as never)),
   ]);
   const spend = new Iris.SpendBuilder(
     params.inputNote,

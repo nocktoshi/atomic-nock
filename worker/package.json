@@ -1,0 +1,11 @@
+{
+  "name": "atomicnock-worker",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev -c wrangler.dev.toml --port 8787",
+    "check": "tsc --noEmit -p tsconfig.json",
+    "test": "vitest run",
+    "deploy": "wrangler deploy"
+  }
+}

@@ -16,7 +16,6 @@ import type { SessionValue } from "./session.js";
 import { getSwapRepository } from "../app/repo/swap-repo.js";
 import { DEFAULT_NOCK_REFUND_DELTA } from "../config.js";
 import { secretStore } from "../app/storage/secret-store.js";
-import { swapStatus } from "../app/roles.js";
 import { useSession } from "./session.js";
 import { useLog, LogBox, type LogApi } from "./log.js";
 import { Wizard, type WizardStep } from "./Wizard.js";
@@ -45,11 +44,14 @@ interface SellerCtx {
 }
 
 function stepForSwap(swap: DraftSwap): number {
-  if (!swap.hEvm) return 0;
-  const st = swapStatus(swap as SwapPublic);
-  if (st === "withdrawn" || st === "claimed" || st === "refunded") return 3;
-  if (st === "nock-locked" || st === "usdc-locked") return 2;
-  return 1;
+  if (!swap.hEvm) return 0; // brand new → generate
+  // Base the step on the SELLER's own actions so they can never skip locking NOCK
+  // (e.g. if the buyer locks USDC before the seller has locked, the seller must
+  // still land on the lock step — otherwise they'd withdraw with no lockFirstName
+  // and the buyer could never claim).
+  if (swap.usdcWithdrawTxHash) return 3; // already withdrew USDC → done
+  if (swap.lockFirstName) return 2; // locked NOCK → withdraw USDC
+  return 1; // created/claimed but NOT locked yet → lock NOCK
 }
 
 const patch = (
@@ -92,7 +94,7 @@ function GenerateBody({ swap, setSwap }: SellerCtx) {
       />
       <span className="addr-resolve-hint">{priceHint}</span>
       <AddressField
-        label="Buyer Nockchain Address (only this wallet can claim)"
+        label="Buyer Nockchain Address — leave blank for an open swap (buyer claims via link)"
         kind="nock"
         value={swap?.buyerPkh ?? ""}
         onChange={(a) => patch(setSwap, { buyerPkh: a as Digest })}
@@ -150,6 +152,12 @@ function LockBody({ swap }: SellerCtx) {
           </div>
         )}
       </div>
+      {!swap?.buyerPkh && (
+        <p className="fee-disclaimer">
+          Waiting for a buyer to claim this swap — share the link. Their address
+          fills in automatically once they claim, then you can lock.
+        </p>
+      )}
       <p className="fee-disclaimer">
         Fee: a 0.5% protocol fee is deducted from the USDC withdrawal.
       </p>
@@ -158,20 +166,25 @@ function LockBody({ swap }: SellerCtx) {
 }
 
 function WithdrawBody({ swap }: SellerCtx) {
-  const lockedLabel =
-    swap?.nockGift != null ? `${nicksToNock(swap.nockGift)} NOCK` : "—";
+  const usdcNum = parseFloat(swap?.usdcAmount ?? "");
+  const withdrawLabel = Number.isFinite(usdcNum) ? `$${usdcNum.toFixed(2)}` : "—";
+  const soldLabel = swap?.nockGift != null ? `${nicksToNock(swap.nockGift)} NOCK` : "—";
   const lockTx = swap?.nockLockTxId;
 
   return (
     <div>
       <div className="swap-order-summary">
         <div className="swap-card-row">
-          <span className="k">Locked</span>
-          <span className="v">{lockedLabel}</span>
+          <span className="k">Withdrawing</span>
+          <span className="v">{withdrawLabel}</span>
+        </div>
+        <div className="swap-card-row">
+          <span className="k">You sold</span>
+          <span className="v">{soldLabel}</span>
         </div>
         {lockTx && (
           <div className="swap-card-row">
-            <span className="k">Transaction</span>
+            <span className="k">NOCK lock tx</span>
             <span className="v" title={lockTx}>
               {short(lockTx)}
             </span>
@@ -225,8 +238,13 @@ const steps: WizardStep<SellerCtx>[] = [
       });
       setSwap(created.swap);
       await secretStore.putSellerPreimage(created.swap.hEvm, created.preimageJam);
-      await repo.put(created.swap);
-      log("Swap created. Share the link above with the buyer.", true);
+      await repo.create(created.swap);
+      log(
+        created.swap.buyerPkh
+          ? "Swap created. Share the link above with the buyer."
+          : "Open swap created. Share the link — the buyer claims it with their wallet.",
+        true
+      );
     },
   },
   {
@@ -234,10 +252,15 @@ const steps: WizardStep<SellerCtx>[] = [
     title: "Lock NOCK on Nockchain",
     nextLabel: "Lock NOCK",
     Body: LockBody,
+    // Can't lock until a buyer has committed (open swaps wait for a claim).
+    canAdvance: ({ swap }) => !!swap?.buyerPkh,
     async onNext({ swap, setSwap, repo, log, lockNockAction, nock }) {
       if (swap?.lockFirstName) {
         log("NOCK already locked for this swap.", true);
         return;
+      }
+      if (!swap?.buyerPkh) {
+        throw new Error("Waiting for a buyer to claim this swap before you can lock.");
       }
       if (!nock) throw new Error("Connect Iris (Nockchain wallet).");
       const walletAddress = nock.address ?? nock.pkh;

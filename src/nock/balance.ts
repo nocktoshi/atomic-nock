@@ -1,6 +1,11 @@
 import { base58 } from "@scure/base";
-import { getIrisWasm, initIrisWasm, pkhSingle, type Note, type Digest  } from "../iris.js";
-import { assertBase58Digest, BASE58_DIGEST_RE } from "./tx.js";
+import { getIrisWasm, initIrisWasm, pkhSingle, type Note, type Digest } from "../iris.js";
+import {
+  assertBase58Digest,
+  BASE58_DIGEST_RE,
+  htlcLockRootDigest,
+  htlcGiftOutputFirstName,
+} from "./tx.js";
 import { Nicks } from '@nockbox/iris-sdk/wasm'
 import type { NockWalletSession } from "./wallet.js";
 
@@ -168,6 +173,108 @@ export async function fetchNotesByFirstName(
   const notes = await parseBalanceEntries(balance?.notes ?? []);
   console.debug('found notes:', notes)
   return { notes, height: balance?.height?.value };
+}
+
+/**
+ * Confirm, before the buyer locks USDC, that the seller's HTLC gift note is real
+ * and claimable by THIS buyer. Three checks, strongest last:
+ *   1. a note exists at `lockFirstName` on-chain with at least the gift amount;
+ *   2. the committed `lockRoot` equals the OR-lock root recomputed from
+ *      [buyer pkh + hax(hNock)] / [seller pkh + tim(refundHeight)] (the node
+ *      returns no note lock data, so we bind via the declared root); and
+ *   3. (when `parentHash` is known) the *expected* gift first name — recomputed
+ *      from the lock + parentHash + gift — equals the declared `lockFirstName`.
+ *      This ties lockFirstName to lockRoot, closing the "right root, wrong note"
+ *      gap. The first name depends only on the output seed, not the input note;
+ *      we self-validate that with two synthetic inputs and skip (rather than
+ *      false-fail) if they ever disagree.
+ */
+export async function verifyNockLockConfirmed(
+  wallet: NockWalletSession,
+  params: {
+    lockFirstName: Digest;
+    lockRoot?: Digest;
+    parentHash?: Digest;
+    hNock: Digest;
+    buyerPkh: Digest;
+    sellerPkh: Digest;
+    refundHeight: bigint;
+    gift: bigint;
+  }
+): Promise<{ ok: boolean; reason?: string }> {
+  try {
+    await initIrisWasm();
+
+    // 1. The HTLC gift note must be in the node's state with at least the gift.
+    const { notes } = await fetchNotesByFirstName(wallet, params.lockFirstName);
+    if (!notes.some((n) => n.assets >= params.gift)) {
+      return { ok: false, reason: "HTLC note not on-chain yet (or wrong amount)" };
+    }
+
+    // 2. The node doesn't return note lock data, so we bind the swap's declared
+    //    lockRoot to the HTLC conditions for THIS buyer — recompute the OR-lock
+    //    root from [my pkh + hax(hNock)] / [seller pkh + tim(refundHeight)] and
+    //    require it to equal the lockRoot the seller committed (the same value the
+    //    claim path requires to match, so a mismatch means we couldn't claim).
+    if (!params.lockRoot) {
+      return { ok: false, reason: "swap is missing the HTLC lock root" };
+    }
+    const expectedRoot = await htlcLockRootDigest(
+      params.hNock,
+      params.buyerPkh,
+      params.sellerPkh,
+      params.refundHeight
+    );
+    if (String(params.lockRoot) !== String(expectedRoot)) {
+      return {
+        ok: false,
+        reason: "lock root does not match this swap's HTLC conditions",
+      };
+    }
+
+    // 3. Recompute the expected gift first name and require it to equal the
+    //    declared lockFirstName (binds lockFirstName ↔ lockRoot). The output name
+    //    is independent of the input note, so we drive it with the buyer's own
+    //    note (assets bumped) + the seller's parentHash. We compute it twice with
+    //    different synthetic inputs; only a stable result is trusted to fail.
+    if (params.parentHash) {
+      try {
+        const entries = (await fetchWalletNotes(wallet)).notes;
+        if (entries.length) {
+          const base = entries.reduce((a, b) => (b.assets > a.assets ? b : a)).note;
+          const synth = (assets: bigint): Note =>
+            ({
+              ...(base as unknown as Record<string, unknown>),
+              assets: String(assets),
+            }) as unknown as Note;
+          const common = {
+            hNock: params.hNock,
+            buyerPkh: params.buyerPkh,
+            sellerPkh: params.sellerPkh,
+            refundHeight: params.refundHeight,
+            giftNicks: params.gift,
+            parentHash: params.parentHash,
+            inputPkh: wallet.pkh as Digest,
+          };
+          const firstA = await htlcGiftOutputFirstName({ ...common, inputNote: synth(params.gift * 2n) });
+          const firstB = await htlcGiftOutputFirstName({ ...common, inputNote: synth(params.gift * 3n) });
+          if (String(firstA) === String(firstB) && String(firstA) !== String(params.lockFirstName)) {
+            return {
+              ok: false,
+              reason: "lock first name does not match this swap's HTLC conditions",
+            };
+          }
+        }
+      } catch (e) {
+        // Best-effort — a recompute failure leaves the lockRoot binding above.
+        console.debug("[verify] gift first-name recompute unavailable:", e);
+      }
+    }
+
+    return { ok: true };
+  } catch (e) {
+    return { ok: false, reason: e instanceof Error ? e.message : "verification failed" };
+  }
 }
 
 export async function fetchWalletNotes(

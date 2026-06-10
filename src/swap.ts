@@ -112,18 +112,15 @@ export function decodeSwapParams(json: string): SwapPublic {
       "Swap JSON must not include preimageJam — seller reveals it via Base withdraw"
     );
   }
-  if (!raw.buyerPkh) {
-    throw new Error(
-      "Swap JSON missing buyerPkh — ask seller to regenerate with your Iris pkh"
-    );
-  }
+  // buyerPkh may be absent on an OPEN swap (posted before a buyer has claimed);
+  // it's filled when the buyer commits. Empty string = unclaimed.
   const str = (v: string | undefined): string | undefined =>
     v?.trim() ? v : undefined;
   return {
     hNock: raw.hNock as Digest,
     hEvm: raw.hEvm as Hex,
     sellerPkh: raw.sellerPkh as Digest,
-    buyerPkh: raw.buyerPkh as Digest,
+    buyerPkh: (raw.buyerPkh ?? "") as Digest,
     nockRefundHeight: BigInt(raw.nockRefundHeight),
     usdcTimelock: BigInt(raw.usdcTimelock),
     nockGift: BigInt(raw.nockGift),

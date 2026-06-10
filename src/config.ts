@@ -10,19 +10,22 @@ export const NOCK_GRPC_UPSTREAM =
 export const CHAIN = base;
 export const CHAIN_ID = Number(import.meta.env.VITE_CHAIN_ID ?? base.id);
 
+/** Ethereum mainnet RPC for ENS lookups. Must allow browser CORS. The viem
+ *  default (eth.merkle.io) does not, so we default to a CORS-friendly endpoint. */
+export const ETH_RPC_URL = (
+  import.meta.env.VITE_ETH_RPC_URL ?? "https://ethereum-rpc.publicnode.com"
+).trim();
+
 export const USDC_ADDRESS =
   "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913" as Address;
 
 export const HTLC_ADDRESS = (import.meta.env.VITE_HTLC_ADDRESS ??
   "0xD347AC30A11abe63e92CFcb2285dC770FF0F7236") as Address;
 
-/** Cloudflare KV worker base URL. Empty in dev = in-memory store (not durable). */
+/** Swap API base URL (the Worker). Empty in dev = in-memory store (not durable). */
 const kvFromEnv = (import.meta.env.VITE_KV_URL ?? "").trim();
 export const KV_URL =
   kvFromEnv || (import.meta.env.PROD ? "https://api.atomicnock.com" : "");
-
-/** Shared bearer token gating writes to the KV worker (matches the worker's KV_TOKEN). */
-export const KV_TOKEN = (import.meta.env.VITE_KV_TOKEN ?? "").trim();
 
 /** Market price feed (NOCK/USD). Empty in dev = price hidden. */
 const priceFromEnv = (import.meta.env.VITE_PRICE_URL ?? "").trim();

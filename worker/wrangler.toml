@@ -13,6 +13,11 @@ previews_enabled = false
 binding = "SWAPS"
 id = "5851f03bf8614f54a6228a5aa18c6e65"
 
-# Shared write token. Set as a secret (not committed):
-#   wrangler secret put KV_TOKEN
-# and use the same value as the web app's VITE_KV_TOKEN.
+# Bundle the rose-wasm verifier as a CompiledWasm module (server-side signature
+# verification). NOTE: the wasm is ~1MB gzipped — requires the Workers *Paid*
+# plan (10MB compressed limit; the free tier is 1MB).
+[[rules]]
+type = "CompiledWasm"
+globs = ["**/*.wasm"]
+fallthrough = true
+

@@ -7,15 +7,8 @@ import type { KvStore } from "./kv.js";
  * NEVER store secrets (the seller preimage) here — see SecretStore.
  */
 export class CloudflareKvStore implements KvStore {
-  constructor(
-    private readonly baseUrl: string,
-    private readonly token?: string
-  ) {
+  constructor(private readonly baseUrl: string) {
     this.baseUrl = baseUrl.replace(/\/$/, "");
-  }
-
-  private authHeaders(): HeadersInit {
-    return this.token ? { authorization: `Bearer ${this.token}` } : {};
   }
 
   async get(key: string): Promise<string | null> {
@@ -25,23 +18,14 @@ export class CloudflareKvStore implements KvStore {
     return res.text();
   }
 
-  async put(key: string, value: string): Promise<void> {
-    const res = await fetch(`${this.baseUrl}/kv/${encodeURIComponent(key)}`, {
-      method: "PUT",
-      headers: this.authHeaders(),
-      body: value,
-    });
-    if (!res.ok) throw new Error(`KV put failed (${res.status})`);
+  // Writes are no longer raw KV puts — they go through the authenticated
+  // SwapApi (create/claim/advance). These throw to catch any stray caller.
+  async put(): Promise<void> {
+    throw new Error("direct KV writes are disabled — use the SwapApi");
   }
 
-  async delete(key: string): Promise<void> {
-    const res = await fetch(`${this.baseUrl}/kv/${encodeURIComponent(key)}`, {
-      method: "DELETE",
-      headers: this.authHeaders(),
-    });
-    if (!res.ok && res.status !== 404) {
-      throw new Error(`KV delete failed (${res.status})`);
-    }
+  async delete(): Promise<void> {
+    throw new Error("direct KV deletes are disabled — use the SwapApi");
   }
 
   async list(prefix: string): Promise<string[]> {

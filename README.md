@@ -2,123 +2,131 @@
 
 # Atomic Nock
 
-Cross-chain hash-time-locked swap: native **NOCK** on Nockchain (iris-wasm + `hax`) and **USDC** on **Base mainnet** (minimal HTLC).
+Trustless, non-custodial swap of native **NOCK** on Nockchain ↔ **USDC** on **Base mainnet**, using hash-time-locked contracts on both chains. No custodian, no KYC, no shared secret in the browser.
+
+## How it works
+
+A swap is anchored by a random **preimage** the seller generates locally. From it: `H_evm = keccak256(jam)` (the Base hashlock) and `H_nock = hashNoun(jam)` (the Nockchain hashlock). The preimage never leaves the seller's browser until step 5, where revealing it on Base is what lets the buyer claim NOCK.
+
+Swaps are posted **open** — nobody types an address; addresses always come from the connected wallets:
+
+1. **Seller posts an open swap** — NOCK amount + USDC price. Seller's Nockchain + Base addresses come from their wallets. Shareable link: `/swap/<id>`.
+2. **Buyer claims** — opens the link, connects wallets, clicks *Claim*. Their Nockchain pkh is taken from their **authenticated session** (can't be spoofed) and committed once.
+3. **Seller locks NOCK** in the Nockchain HTLC (claim branch = buyer pkh + `hax` preimage; refund branch = seller pkh after a block height).
+4. **Buyer locks USDC** in [`NockOtcHtlc`](contracts/src/NockOtcHtlc.sol) on Base against `H_evm`.
+5. **Seller withdraws USDC** with `withdraw(swapId, preimageJam)` → the preimage is now public in the Base tx calldata.
+6. **Buyer claims NOCK** — reads the preimage from that Base withdraw tx and claims on Nockchain.
+
+If either side stalls, timelocks let each party refund their own leg.
 
 ## Architecture
 
-1. **Seller** generates `preimageJam` locally, `H_nock = hashNoun(jam)`, `H_evm = keccak256(jam)` — preimage never leaves the seller browser until step 4.
-2. **Seller** locks NOCK (claim: buyer `pkh` + `hax`; refund: seller `pkh`/`tim`) and shares **swap JSON (hashes only)**.
-3. **Buyer** locks USDC in [`NockOtcHtlc`](contracts/src/NockOtcHtlc.sol) with `H_evm`.
-4. **Seller** `withdraw(swapId, preimageJam)` on Base → preimage is public in the tx calldata.
-5. **Buyer** reads `preimageJam` from that Base withdraw tx, then claims NOCK on Nockchain.
+| Layer | What |
+|---|---|
+| **Web** (`src/`) | React + React Router SPA (Vite). Iris (Nockchain) + MetaMask (Base) connect from a wallet bar; per-step wizards drive each side of the swap. |
+| **Swap API** (`worker/`) | A Cloudflare Worker. Owns the swap state machine, authorizes writes by **Iris-signed session**, and verifies Nockchain signatures with `rose-wasm`. |
+| **Storage** | Swap **metadata** in Cloudflare KV (non-secret). The **preimage** stays client-side in IndexedDB — never on the server. |
+| **Contract** (`contracts/`) | Foundry HTLC `NockOtcHtlc.sol` on Base: `lock`, `withdraw(id, preimage)`, `refund`. |
 
-## Prerequisites
+`iris-wasm` / `rose-wasm` ship as npm packages (`@nockbox/iris-sdk`, `@nockchain/rose-wasm`) — no source build. Nockchain txs are built in-browser and signed in the Iris extension (`nock_connect`, `nock_signTx`, `nock_signMessage`); Base txs use MetaMask.
 
-- [Foundry](https://book.getfoundry.sh/)
-- [Rust](https://rustup.rs/) + `wasm-pack` (`cargo install wasm-pack`)
-- [Node.js](https://nodejs.org/) 20+
-- [Envoy](https://www.envoyproxy.io/) (or Docker) for gRPC-Web
-- [Envoy](https://www.envoyproxy.io/) proxying public **`rpc.nockchain.net:443`** (default) or a local node
-- [Iris wallet](https://github.com/nockbox/iris) browser extension (Nockchain)
-- MetaMask on **Base mainnet** (chain id 8453)
+### Security model
 
-## Quick start
+- **No shared write secret in the browser.** Writes are authorized by an **Iris-signed session**: the user signs one challenge with their wallet, the Worker verifies the Nockchain signature (`rose-wasm`) and binds it to the pkh, then issues a 7-day token (persisted in `localStorage` — sign once).
+- **The Worker enforces integrity**, so a malicious client can't tamper with an in-flight swap: immutable economic terms, per-party field writes, single-commit buyer claim, and protocol **ordering invariants** (e.g. you can't lock USDC before NOCK is locked).
+- The **on-chain HTLCs are the ultimate guard** — the KV record is just coordination metadata.
+
+## Repo layout
+
+```
+src/            React app (Vite)
+  ui/           wallet bar, dashboard, seller/buyer wizards
+  app/          session/auth, swap repo (KV reads + authed write API), storage
+  nock/  evm/   Nockchain + Base tx building / signing
+  actions/      swap steps (generate / lock / withdraw / claim / refund)
+worker/         Cloudflare Worker — swap API (sessions, integrity, rose-wasm verify)
+contracts/      Foundry HTLC (NockOtcHtlc.sol)
+```
+
+## Local dev
+
+Prerequisites: **Node ≥ 20.19** (Vite 8), the [Iris wallet](https://github.com/nockbox/iris) extension, and MetaMask on **Base mainnet** (chain id 8453).
 
 ```bash
-# 1. Build iris-wasm for the browser
-make wasm
+# 1. Install
+npm install
 
-# 2. Install web deps
-make install
-
-# 3. Deploy HTLC to Base (optional until USDC step)
+# 2. Env — defaults are fine for local dev
 cp .env.example .env
-# Set DEPLOYER_PRIVATE_KEY=0x... (wallet needs Base ETH)
-make deploy-base-dry   # simulate first
-make deploy-base       # broadcast
-# Paste logged address into VITE_HTLC_ADDRESS in .env
+#    VITE_KV_URL=http://localhost:8787   → use the local dev worker (below)
+#    VITE_KV_URL=                        → ephemeral in-memory store, no worker needed
 
-# 4. Web UI (Vite proxies gRPC-Web to rpc.nockchain.net — no Envoy required in dev)
-make dev
-# Open http://localhost:5173 — leave proxy URL as http://localhost:5173
+# 3. Terminal A — local swap API (isolated local KV; never touches production)
+npm --prefix worker run dev      # http://localhost:8787
 
-# Optional: Terminal A: Envoy → Nock gRPC (if not using Vite proxy)
-# make envoy
+# 4. Terminal B — web app
+npm run dev                      # http://localhost:5173
 ```
 
-## Web UI (wallets)
+Then connect **Iris** and **MetaMask**; you'll sign in once at connect, and can create / claim swaps.
 
-The app does **not** ask for seed phrases. Connect extensions on each side:
+The Nockchain gRPC-Web calls are proxied by the Vite dev server to `VITE_NOCK_GRPC_UPSTREAM` (default `rpc.nockchain.net`) — no Envoy or local node required.
 
-| Role | Nockchain | Base (USDC) |
-|------|-----------|---------------|
-| Seller | **Iris** — Connect Iris | **MetaMask** — Connect MetaMask |
-| Buyer | **Iris** — Connect Iris | **MetaMask** — Connect MetaMask |
-
-Nockchain txs are built in the browser and signed via `window.nockchain` (`nock_connect`, `nock_signRawTx`), matching [nock-names `use-wallet.js`](https://github.com/nocktoshi/nock-names/blob/master/src/hooks/use-wallet.js). EVM txs use MetaMask on Base (chain id 8453).
-
-**Seller:** connect Iris → buyer **Nock pkh** → generate (preimage stays in session) → lock NOCK → share JSON (no preimage) → after buyer locks USDC, **withdraw USDC** on Base (reveals preimage on-chain).
-
-**Buyer:** connect Iris (pkh matches JSON) → load JSON → lock USDC → **load preimage from Base** (withdraw tx or scan by swapId) → claim NOCK.
-
-## Nockchain RPC (gRPC-Web)
-
-**Dev (recommended):** `make dev` — Vite proxies `/nockchain.*` to **`rpc.nockchain.net`** (same pattern as [nock-names](https://github.com/nocktoshi/nock-names)). Set the UI proxy field to **`http://localhost:5173`** (default).
-
-**Envoy (optional):** [`envoy.yaml`](envoy.yaml) → `rpc.nockchain.net:443`. `make envoy-nockchain` uses `rpc.nockchain.net` (often **403** from Cloudflare when run in Docker).
-
-```bash
-make envoy        # rpc.nockchain.net
-make envoy-local  # 127.0.0.1:5557 (your node)
-make envoy-nockchain  # rpc.nockchain.net
-```
-
-**Cloudflare 403?** Do not point the browser at `:8080` unless Envoy works from your network. Use the Vite dev URL (`http://localhost:5173`) or `make envoy-local`.
-
-**Install Envoy** (optional if you have Docker):
-
-```bash
-brew install envoy
-```
-
-Or force Docker: `make envoy-docker`.
-
-The web UI **gRPC-Web proxy** field should be `http://localhost:5173` during `make dev`, or `http://localhost:8080` if using Envoy.
+> The dev worker uses `worker/wrangler.dev.toml` + `worker/.dev.vars` (`SESSION_SECRET`). `wrangler dev` runs in **local mode** and simulates KV under `worker/.wrangler/state` — it never touches the production namespace. Delete `worker/.wrangler/` to reset dev data.
 
 ## Environment
 
 | Variable | Purpose |
-|----------|---------|
-| `VITE_ENVOY_URL` | gRPC-Web base URL (empty = same origin / Vite proxy in dev) |
-| `VITE_NOCK_GRPC_UPSTREAM` | Vite proxy target (default `https://rpc.nockchain.net`) |
-| `VITE_HTLC_ADDRESS` | Deployed `NockOtcHtlc` on Base |
-| `BASE_RPC_URL` | Foundry deploy RPC |
-| `DEPLOYER_PRIVATE_KEY` | Deployer key |
+|---|---|
+| `VITE_KV_URL` | Swap API URL. Local: `http://localhost:8787`. Empty: in-memory. Prod: deployed Worker URL. |
+| `VITE_HTLC_ADDRESS` | Deployed `NockOtcHtlc` on Base (default is the current deployment). |
+| `VITE_NOCK_GRPC_UPSTREAM` | Vite proxy target for Nockchain gRPC-Web (default `https://rpc.nockchain.net`). |
+| `VITE_ETH_RPC_URL` | Mainnet RPC for ENS lookups — must allow CORS (optional; has a default). |
+| `VITE_PRICE_URL` | NOCK/USD price feed (optional; empty = hidden). |
+| `BASE_RPC_URL`, `DEPLOYER_PRIVATE_KEY`, `BASESCAN_API_KEY`, `TREASURY_ADDRESS` | Contract deploy only. |
 
-## Contract
+There is **no** `VITE_KV_TOKEN` — writes are authorized per-user by signature, not a shared token.
 
-- **USDC (Base):** `0xD347AC30A11abe63e92CFcb2285dC770FF0F7236`
-- **Functions:** `lock(seller, amount, hashlock, timelock)`, `withdraw(id, preimageJam)`, `refund(id)`
+## Deploy
+
+### Worker (swap API)
+
+Requires the Cloudflare **Workers Paid** plan: the `rose-wasm` verifier is ~1 MB gzipped, over the free-tier 1 MB Worker limit (well under the 10 MB paid limit).
 
 ```bash
-cd contracts && forge test   # add tests later
-cd contracts && forge build
+cd worker
+wrangler kv namespace create SWAPS   # once — paste the id into wrangler.toml
+wrangler secret put SESSION_SECRET   # a random 32+ byte secret (HMAC key for sessions)
+wrangler deploy                      # → e.g. https://api.atomicnock.com
 ```
 
-## POC caveats
+### Web app
 
-- **Not audited.** Use minimal USDC on mainnet.
-- Swap JSON has **hashes and params only** — no `preimageJam`. Buyer learns the secret from the seller's Base `withdraw` transaction.
-- Nockchain txs are built in-browser and **signed in the Iris extension** (no mnemonics in the web app).
-- Nock input notes often need `pkh` + coinbase `tim(100)` unlock — fund notes accordingly.
-- iris-wasm is vendored from [nockbox/iris-rs](https://github.com/nockbox/iris-rs); pin `vendor/iris-rs` for reproducible builds.
+```bash
+npm run build        # → dist/ (static)
+# Host dist/ (e.g. Cloudflare Pages). Set VITE_KV_URL to the deployed Worker URL and
+# VITE_HTLC_ADDRESS to the deployed contract.
+```
 
-## Makefile targets
+### Contract (Base)
 
-| Target | Description |
-|--------|-------------|
-| `make wasm` | Clone/build iris-wasm → `web/public/pkg` |
-| `make envoy` | Run Envoy with `envoy.yaml` |
-| `make dev` | Vite dev server |
-| `make deploy-base` | Broadcast deploy script |
-| `make forge-build` | Compile contracts |
+```bash
+cp .env.example .env          # set DEPLOYER_PRIVATE_KEY (fund with Base ETH), BASESCAN_API_KEY
+make deploy-base-dry          # simulate
+make deploy-base              # broadcast → paste the address into VITE_HTLC_ADDRESS
+```
+
+USDC on Base: `0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913`.
+
+## Tests
+
+```bash
+npm test                       # web app unit tests (vitest)
+npm --prefix worker run test   # worker integrity / ordering-invariant tests
+```
+
+## Caveats
+
+- **Not audited.** This is mainnet — use small amounts.
+- The shared swap record holds **hashes and params only** — never the preimage. The buyer learns the secret from the seller's Base `withdraw` transaction.
+- A 7-day session token in `localStorage` is XSS-exposed (standard dApp tradeoff); it only authorizes writes to that wallet's own swaps.
