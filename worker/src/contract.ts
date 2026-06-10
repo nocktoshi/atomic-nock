@@ -28,6 +28,8 @@ export const IMMUTABLE_FIELDS = [
   "sellerPkh",
   "usdcAmount",
   "swapId",
+  "token",
+  "createdAt",
 ] as const;
 
 export const BUYER_CLAIM_FIELDS = ["buyerPkh", "buyerEth"] as const;

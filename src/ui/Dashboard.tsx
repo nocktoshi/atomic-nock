@@ -8,6 +8,7 @@ import { getSwapRepository } from "../app/repo/swap-repo.js";
 import { refundUsdcAction } from "../actions/buyer.js";
 import { getHiddenSwaps, hideSwap } from "../app/hidden-swaps.js";
 import { useSession } from "./session.js";
+import { byNewestSwap } from "./util.js";
 import { useLog, LogBox } from "./log.js";
 import { SwapOverviewCard } from "./SwapOverviewCard.js";
 
@@ -42,7 +43,7 @@ export function Dashboard() {
         if (hidden.has(s.hEvm.toLowerCase())) continue; // soft-deleted locally
         byId.set(s.hEvm.toLowerCase(), s);
       }
-      setSwaps([...byId.values()]);
+      setSwaps([...byId.values()].sort(byNewestSwap));
       setFetchedFor(walletKey);
     } catch (e) {
       logErr(e);
@@ -64,7 +65,7 @@ export function Dashboard() {
           if (hidden.has(s.hEvm.toLowerCase())) continue;
           byId.set(s.hEvm.toLowerCase(), s);
         }
-        setSwaps([...byId.values()]);
+        setSwaps([...byId.values()].sort(byNewestSwap));
         setFetchedFor(key);
       } catch (e) {
         if (alive) logErr(e);
@@ -77,6 +78,16 @@ export function Dashboard() {
 
   function openSwap(swap: SwapPublic): void {
     navigate(`/swap/${swap.hEvm}`);
+  }
+
+  async function doCancel(swap: SwapPublic): Promise<void> {
+    try {
+      await repo.cancel(swap.hEvm);
+      log("Open order cancelled and delisted.", true);
+      await refreshSwaps();
+    } catch (e) {
+      logErr(e);
+    }
   }
 
   async function doRefund(swap: SwapPublic, role: Role): Promise<void> {
@@ -143,6 +154,9 @@ export function Dashboard() {
               refund.nock =
                 !!swap.lockFirstName && !swap.nockClaimTxId && !swap.nockRefundTxId;
             }
+            // An unclaimed, unlocked open order can be cancelled by its seller.
+            const cancellable =
+              role === "seller" && !swap.buyerPkh && !swap.lockFirstName;
             return (
               <SwapOverviewCard
                 key={swap.hEvm}
@@ -152,6 +166,7 @@ export function Dashboard() {
                 refund={refund}
                 onOpen={() => openSwap(swap)}
                 onRefund={() => void doRefund(swap, role)}
+                onCancel={cancellable ? () => void doCancel(swap) : undefined}
                 onHide={() => {
                   hideSwap(swap.hEvm ?? "");
                   log("Swap deleted.", true);
@@ -184,6 +199,12 @@ export function Dashboard() {
       <div className="create-row">
         <button type="button" onClick={() => navigate("/new")}>
           Create new swap (sell NOCK)
+        </button>
+        <button type="button" onClick={() => navigate("/market")}>
+          Browse marketplace
+        </button>
+        <button type="button" onClick={() => navigate("/settings")}>
+          Settings
         </button>
       </div>
     </section>

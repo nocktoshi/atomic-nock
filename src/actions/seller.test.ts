@@ -130,14 +130,21 @@ describe("withdrawUsdcAction", () => {
     };
     const swap = { ...preLockSwap(), buyerEth: "0x2222222222222222222222222222222222222222" as Address };
     const { hash } = await withdrawUsdcAction({ swap }, deps);
-    expect(deps.computeSwapId).toHaveBeenCalledWith({
-      seller: swap.sellerEth,
-      buyer: swap.buyerEth,
-      amount: 1_000_000n,
-      hashlock: swap.hEvm,
-      timelock: swap.usdcTimelock,
+    expect(deps.computeSwapId).toHaveBeenCalledWith(
+      {
+        seller: swap.sellerEth,
+        buyer: swap.buyerEth,
+        amount: 1_000_000n,
+        hashlock: swap.hEvm,
+        timelock: swap.usdcTimelock,
+      },
+      undefined
+    );
+    expect(deps.withdrawUsdc).toHaveBeenCalledWith({
+      swapId: "0xid",
+      preimageJam: new Uint8Array([5, 5]),
+      token: undefined,
     });
-    expect(deps.withdrawUsdc).toHaveBeenCalledWith({ swapId: "0xid", preimageJam: new Uint8Array([5, 5]) });
     expect(hash).toBe("0xwithdrawtx");
     expect(swap.usdcWithdrawTxHash).toBe("0xwithdrawtx");
   });

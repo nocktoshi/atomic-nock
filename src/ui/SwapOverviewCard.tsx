@@ -2,7 +2,7 @@
 import type { SwapPublic } from "../swap.js";
 import type { Role, SwapStage, RefundInfo } from "../app/roles.js";
 import { impliedNockUsd } from "../market/price.js";
-import { short, useResolvedNock } from "./util.js";
+import { quoteDisplay, short, useResolvedNock } from "./util.js";
 
 const NICKS_PER_NOCK = 65536;
 
@@ -10,14 +10,18 @@ function nock(swap: SwapPublic): string {
   return `${parseFloat((Number(swap.nockGift) / NICKS_PER_NOCK).toFixed(6))} NOCK`;
 }
 
-const STAGE_LABEL: Record<SwapStage, string> = {
-  created: "Created",
-  "nock-locked": "NOCK locked",
-  "usdc-locked": "USDC locked",
-  withdrawn: "USDC withdrawn",
-  claimed: "Claimed",
-  refunded: "Refunded",
-};
+/** Stage badge text; quote-leg stages take the swap's token symbol. */
+function stageLabel(status: SwapStage, symbol: string): string {
+  const labels: Record<SwapStage, string> = {
+    created: "Created",
+    "nock-locked": "NOCK locked",
+    "usdc-locked": `${symbol} locked`,
+    withdrawn: `${symbol} withdrawn`,
+    claimed: "Claimed",
+    refunded: "Refunded",
+  };
+  return labels[status];
+}
 
 export interface OverviewCardProps {
   swap: SwapPublic;
@@ -27,6 +31,8 @@ export interface OverviewCardProps {
   onOpen(): void;
   onRefund(): void;
   onHide(): void;
+  /** Seller-only: cancel an unclaimed open swap (delists it everywhere). */
+  onCancel?(): void;
 }
 
 export function SwapOverviewCard({
@@ -37,9 +43,12 @@ export function SwapOverviewCard({
   onOpen,
   onRefund,
   onHide,
+  onCancel,
 }: OverviewCardProps) {
   const refundable = role === "buyer" ? refund.eth : refund.nock;
-  const implied = impliedNockUsd(swap);
+  const quote = quoteDisplay(swap);
+  // "$X/NOCK implied" only makes sense for a USD quote; wNOCK shows the ratio.
+  const implied = quote.kind === "usd" ? impliedNockUsd(swap) : null;
 
   const counterparty = role === "seller" ? swap.buyerPkh : swap.sellerPkh;
   const counterLabel = role === "seller" ? "Buyer" : "Seller";
@@ -62,7 +71,7 @@ export function SwapOverviewCard({
       <div className="swap-card-title">
         <span>{role === "seller" ? "Selling NOCK" : "Buying NOCK"}</span>
         <div className="swap-card-title-badges">
-          <span className="swap-badge">{STAGE_LABEL[status]}</span>
+          <span className="swap-badge">{stageLabel(status, quote.symbol)}</span>
           {refundable && <span className="refund-badge">Refund available</span>}
         </div>
       </div>
@@ -77,14 +86,21 @@ export function SwapOverviewCard({
           <span className="v">{nock(swap)}</span>
         </div>
         <div className="swap-card-row">
-          <span className="k">USDC</span>
-          <span className="v">{swap.usdcAmount ? `${swap.usdcAmount} USDC` : "—"}</span>
+          <span className="k">{quote.symbol}</span>
+          <span className="v">{quote.amountLabel}</span>
         </div>
-        {implied != null && (
+        {implied != null ? (
           <div className="swap-card-row">
             <span className="k">Implied</span>
             <span className="v">{`$${implied.toFixed(4)}/NOCK`}</span>
           </div>
+        ) : (
+          quote.priceLabel && (
+            <div className="swap-card-row">
+              <span className="k">Price</span>
+              <span className="v">{quote.priceLabel}</span>
+            </div>
+          )
         )}
         <div className="swap-card-row">
           <span className="k">{counterLabel}</span>
@@ -113,7 +129,19 @@ export function SwapOverviewCard({
               onRefund();
             }}
           >
-            {role === "buyer" ? "Refund USDC" : "Refund NOCK"}
+            {role === "buyer" ? `Refund ${quote.symbol}` : "Refund NOCK"}
+          </button>
+        )}
+        {onCancel && (
+          <button
+            type="button"
+            title="Remove this open order (nothing is locked yet)"
+            onClick={(e) => {
+              e.stopPropagation();
+              onCancel();
+            }}
+          >
+            Cancel order
           </button>
         )}
       </div>

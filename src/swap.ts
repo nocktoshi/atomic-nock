@@ -15,6 +15,12 @@ export interface SwapPublic {
   nockRefundHeight: bigint;
   usdcTimelock: bigint;
   nockGift: bigint;
+  /** Quote token on Base. Absent = USDC (every pre-multi-asset swap). The
+   *  `usdc*` field names below are wire-stable and mean "the Base quote-asset
+   *  leg" regardless of token. */
+  token?: "USDC" | "WNOCK";
+  /** Server-stamped creation time (epoch seconds); used for newest-first sorting. */
+  createdAt?: number;
   /** Seller's Base address — captured at creation so the buyer never types it. */
   sellerEth?: Address;
   /** Buyer's Base address — captured when the buyer locks USDC (enables indexing). */
@@ -86,6 +92,8 @@ export function encodeSwapParams(params: SwapPublic): string {
     hEvm: params.hEvm,
     sellerPkh: params.sellerPkh,
     buyerPkh: params.buyerPkh,
+    ...(params.token ? { token: params.token } : {}),
+    ...(typeof params.createdAt === "number" ? { createdAt: params.createdAt } : {}),
     ...(params.sellerEth ? { sellerEth: params.sellerEth } : {}),
     ...(params.buyerEth ? { buyerEth: params.buyerEth } : {}),
     ...(params.usdcAmount ? { usdcAmount: params.usdcAmount } : {}),
@@ -124,6 +132,8 @@ export function decodeSwapParams(json: string): SwapPublic {
     nockRefundHeight: BigInt(raw.nockRefundHeight),
     usdcTimelock: BigInt(raw.usdcTimelock),
     nockGift: BigInt(raw.nockGift),
+    token: raw.token === "WNOCK" ? "WNOCK" : raw.token === "USDC" ? "USDC" : undefined,
+    createdAt: raw.createdAt != null ? Number(raw.createdAt) : undefined,
     sellerEth: str(raw.sellerEth) as Address | undefined,
     buyerEth: str(raw.buyerEth) as Address | undefined,
     usdcAmount: str(raw.usdcAmount),

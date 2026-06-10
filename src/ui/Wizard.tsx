@@ -10,13 +10,14 @@ import { useState, type ComponentType } from "react";
 
 export interface WizardStep<Ctx extends object> {
   id: string;
-  title: string;
+  /** Step heading; a function gets the live ctx (e.g. token-aware titles). */
+  title: string | ((ctx: Ctx) => string);
   /** Step body — a component rendered with the shared context as its props. */
   Body: ComponentType<Ctx>;
   /** Action run when Next is clicked. Throw to block advancing (surfaced via onError). */
   onNext?(ctx: Ctx): Promise<void> | void;
-  /** Custom label for the Next button. */
-  nextLabel?: string;
+  /** Custom label for the Next button; a function gets the live ctx. */
+  nextLabel?: string | ((ctx: Ctx) => string);
   /** Terminal step — renders no Next button. */
   terminal?: boolean;
   /** Return false to disable the Next button. Defaults to enabled. */
@@ -57,9 +58,13 @@ export function Wizard<Ctx extends object>({
     }
   }
 
+  const title = typeof step.title === "function" ? step.title(ctx) : step.title;
+  const nextLabel =
+    typeof step.nextLabel === "function" ? step.nextLabel(ctx) : step.nextLabel;
+
   return (
     <section className="panel wizard">
-      <div className="step-indicator">{step.title}</div>
+      <div className="step-indicator">{title}</div>
       <Body {...ctx} />
       <div className="step-nav">
         <button
@@ -80,7 +85,7 @@ export function Wizard<Ctx extends object>({
             }
             onClick={handleNext}
           >
-            {step.nextLabel ?? "Next"}
+            {nextLabel ?? "Next"}
           </button>
         )}
       </div>

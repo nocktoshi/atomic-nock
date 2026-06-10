@@ -187,7 +187,6 @@ export async function fetchNotesByFirstName(
 ): Promise<{ notes: BalanceEntry[]; height?: string }> {
   const balance = await wallet.grpc.getBalanceByFirstName(firstName);
   const notes = await parseBalanceEntries(balance?.notes ?? []);
-  console.debug('found notes:', notes)
   return { notes, height: balance?.height?.value };
 }
 

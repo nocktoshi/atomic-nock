@@ -114,14 +114,14 @@ describe("resolvePreimage", () => {
   it("loads from a withdraw tx and verifies it", async () => {
     const deps = preimageDeps();
     const res = await resolvePreimage({ swap: makeSwap(), cached: null, withdrawTx: "0xtx" as Hex, swapId: null }, deps);
-    expect(deps.getPreimageFromWithdrawTx).toHaveBeenCalledWith("0xtx");
+    expect(deps.getPreimageFromWithdrawTx).toHaveBeenCalledWith("0xtx", undefined);
     expect(res.preimageJam).toEqual(new Uint8Array([9, 9]));
   });
 
   it("falls back to scanning by swapId", async () => {
     const deps = preimageDeps();
     const res = await resolvePreimage({ swap: makeSwap(), cached: null, withdrawTx: "", swapId: "0xswap" as Hex }, deps);
-    expect(deps.findPreimageFromSwapWithdraw).toHaveBeenCalledWith("0xswap");
+    expect(deps.findPreimageFromSwapWithdraw).toHaveBeenCalledWith("0xswap", undefined);
     expect(res.txHash).toBe("0xscanned");
   });
 
@@ -129,7 +129,7 @@ describe("resolvePreimage", () => {
     const deps = preimageDeps();
     const swap = makeSwap({ usdcWithdrawTxHash: "0xrecorded" });
     const res = await resolvePreimage({ swap, cached: null, withdrawTx: "", swapId: null }, deps);
-    expect(deps.getPreimageFromWithdrawTx).toHaveBeenCalledWith("0xrecorded");
+    expect(deps.getPreimageFromWithdrawTx).toHaveBeenCalledWith("0xrecorded", undefined);
     expect(res.txHash).toBe("0xrecorded");
     expect(res.preimageJam).toEqual(new Uint8Array([9, 9]));
   });
@@ -138,7 +138,7 @@ describe("resolvePreimage", () => {
     const deps = preimageDeps();
     const swap = makeSwap({ usdcWithdrawTxHash: "0xrecorded" });
     await resolvePreimage({ swap, cached: null, withdrawTx: "0xmanual" as Hex, swapId: null }, deps);
-    expect(deps.getPreimageFromWithdrawTx).toHaveBeenCalledWith("0xmanual");
+    expect(deps.getPreimageFromWithdrawTx).toHaveBeenCalledWith("0xmanual", undefined);
   });
 
   it("throws when no source is available", async () => {
@@ -188,14 +188,17 @@ describe("refundUsdcAction", () => {
     };
     const swap = makeSwap();
     const { hash } = await refundUsdcAction({ swap }, deps);
-    expect(deps.computeSwapId).toHaveBeenCalledWith({
-      seller: "0xseller",
-      buyer: "0xbuyer",
-      amount: 1_000_000n,
-      hashlock: "0xevm",
-      timelock: 999n,
-    });
-    expect(deps.refundUsdc).toHaveBeenCalledWith("0xid");
+    expect(deps.computeSwapId).toHaveBeenCalledWith(
+      {
+        seller: "0xseller",
+        buyer: "0xbuyer",
+        amount: 1_000_000n,
+        hashlock: "0xevm",
+        timelock: 999n,
+      },
+      undefined
+    );
+    expect(deps.refundUsdc).toHaveBeenCalledWith("0xid", undefined);
     expect(hash).toBe("0xrefundtx");
     expect(swap.usdcRefundTxHash).toBe("0xrefundtx");
   });

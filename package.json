@@ -19,6 +19,7 @@
     "viem": "2.52.2"
   },
   "devDependencies": {
+    "@block65/webcrypto-web-push": "^1.0.2",
     "@cloudflare/workers-types": "^4.20260609.1",
     "@eslint/js": "^10.0.1",
     "@types/react": "^19.2.17",

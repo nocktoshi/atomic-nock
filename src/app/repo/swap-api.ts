@@ -27,6 +27,10 @@ export interface SwapApi {
   get(hEvm: string): Promise<SwapRecord | null>;
   /** List index keys under a prefix (authenticated; server restricts to your own). */
   listKeys(prefix: string): Promise<string[]>;
+  /** Marketplace: open (buyer-less) swaps, newest first (open read, no auth). */
+  listOpen(): Promise<SwapRecord[]>;
+  /** Seller cancels their own unclaimed open swap. */
+  cancel(hEvm: string): Promise<void>;
 }
 
 class HttpSwapApi implements SwapApi {
@@ -77,22 +81,64 @@ class HttpSwapApi implements SwapApi {
     }
     return (await res.json()) as SwapRecord;
   }
+  async listOpen(): Promise<SwapRecord[]> {
+    // Public marketplace read — follow cursors up to a sane cap.
+    const out: SwapRecord[] = [];
+    let cursor: string | undefined;
+    const MAX_PAGES = 4; // 4 × 50 swaps
+    for (let i = 0; i < MAX_PAGES; i++) {
+      const qs = new URLSearchParams();
+      if (cursor) qs.set("cursor", cursor);
+      const res = await fetch(`${this.baseUrl}/open?${qs}`);
+      if (!res.ok) throw new Error(`marketplace list failed (${res.status})`);
+      const json = (await res.json()) as {
+        swaps?: SwapRecord[];
+        cursor?: string;
+        complete?: boolean;
+      };
+      out.push(...(json.swaps ?? []));
+      if (json.complete !== false || !json.cursor) break;
+      cursor = json.cursor;
+    }
+    return out;
+  }
+
+  async cancel(hEvm: string): Promise<void> {
+    await this.post(`/swap/${encodeURIComponent(hEvm)}/cancel`, {});
+  }
+
   async listKeys(prefix: string): Promise<string[]> {
     const token = await ensureSession(this.baseUrl);
-    const res = await fetch(`${this.baseUrl}/list?prefix=${encodeURIComponent(prefix)}`, {
-      headers: { authorization: `Bearer ${token}` },
-    });
-    if (!res.ok) {
-      let msg = "";
-      try {
-        msg = ((await res.json()) as { error?: string }).error ?? "";
-      } catch {
-        /* ignore */
+    // The worker pages with a KV cursor; follow it up to a sane cap so one
+    // pathological prefix can't loop forever.
+    const out: string[] = [];
+    let cursor: string | undefined;
+    const MAX_PAGES = 5; // 5 × 100 keys
+    for (let i = 0; i < MAX_PAGES; i++) {
+      const qs = new URLSearchParams({ prefix });
+      if (cursor) qs.set("cursor", cursor);
+      const res = await fetch(`${this.baseUrl}/list?${qs}`, {
+        headers: { authorization: `Bearer ${token}` },
+      });
+      if (!res.ok) {
+        let msg = "";
+        try {
+          msg = ((await res.json()) as { error?: string }).error ?? "";
+        } catch {
+          /* ignore */
+        }
+        throw new Error(msg || `list failed (${res.status})`);
       }
-      throw new Error(msg || `list failed (${res.status})`);
+      const json = (await res.json()) as {
+        keys?: string[];
+        cursor?: string;
+        complete?: boolean;
+      };
+      out.push(...(json.keys ?? []));
+      if (json.complete !== false || !json.cursor) break;
+      cursor = json.cursor;
     }
-    const json = (await res.json()) as { keys?: string[] };
-    return json.keys ?? [];
+    return out;
   }
 }
 
@@ -125,7 +171,8 @@ export class MemorySwapApi implements SwapApi {
   }
 
   async create(swap: Record<string, unknown>): Promise<SwapRecord> {
-    const rec = { ...swap, version: 1 };
+    // Mirror the worker: stamp createdAt server-side (here: locally).
+    const rec = { ...swap, createdAt: Math.floor(Date.now() / 1000), version: 1 };
     await this.write(rec);
     return rec;
   }
@@ -149,6 +196,21 @@ export class MemorySwapApi implements SwapApi {
   }
   listKeys(prefix: string): Promise<string[]> {
     return this.kv.list(prefix);
+  }
+  async listOpen(): Promise<SwapRecord[]> {
+    const keys = await this.kv.list(SWAP_PREFIX);
+    const swaps = await Promise.all(
+      keys.map((k) => this.load(k.slice(SWAP_PREFIX.length)))
+    );
+    return swaps
+      .filter((s): s is SwapRecord => !!s && !s.buyerPkh && !s.buyerEth)
+      .sort((a, b) => Number(b.createdAt ?? 0) - Number(a.createdAt ?? 0));
+  }
+  async cancel(hEvm: string): Promise<void> {
+    const rec = await this.load(hEvm);
+    if (!rec) throw new Error("swap not found");
+    if (rec.buyerPkh || rec.buyerEth) throw new Error("swap already claimed");
+    await this.kv.delete(SWAP_PREFIX + this.id(hEvm));
   }
 }
 

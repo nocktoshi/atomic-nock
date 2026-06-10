@@ -6,7 +6,24 @@ import {
   type Address,
   type Hex,
 } from "viem";
-import { CHAIN, CHAIN_ID, HTLC_ADDRESS, USDC_ADDRESS } from "../config.js";
+import { CHAIN, CHAIN_ID, tokenInfo, type TokenKey } from "../config.js";
+
+/** Resolve the ERC20 + HTLC addresses for a swap's quote token (default USDC). */
+function tokenCtx(token?: TokenKey): {
+  tokenAddress: Address;
+  htlcAddress: Address;
+  symbol: string;
+} {
+  const t = tokenInfo(token);
+  if (!t.htlc) {
+    throw new Error(
+      t.key === "WNOCK"
+        ? "wNOCK HTLC not deployed — set VITE_HTLC_ADDRESS_WNOCK"
+        : "Set VITE_HTLC_ADDRESS in .env at the repo root (see .env.example), then restart the dev server"
+    );
+  }
+  return { tokenAddress: t.address, htlcAddress: t.htlc, symbol: t.symbol };
+}
 
 export const HTLC_ABI = [
   {
@@ -139,20 +156,23 @@ export async function connectWallet(): Promise<Address> {
   return address;
 }
 
-export async function computeSwapId(params: {
-  seller: Address;
-  buyer: Address;
-  amount: bigint;
-  hashlock: Hex;
-  timelock: bigint;
-}): Promise<Hex> {
+export async function computeSwapId(
+  params: {
+    seller: Address;
+    buyer: Address;
+    amount: bigint;
+    hashlock: Hex;
+    timelock: bigint;
+  },
+  token?: TokenKey
+): Promise<Hex> {
   const client = createPublicClient({
     chain: CHAIN,
     transport: custom(ethereum()),
   });
-  if (!HTLC_ADDRESS) throw new Error("VITE_HTLC_ADDRESS not set");
+  const { htlcAddress } = tokenCtx(token);
   return client.readContract({
-    address: HTLC_ADDRESS,
+    address: htlcAddress,
     abi: HTLC_ABI,
     functionName: "swapId",
     args: [
@@ -170,8 +190,10 @@ export async function approveAndLock(params: {
   amountUsdc: string;
   hashlock: Hex;
   timelock: bigint;
+  /** Quote token (default USDC). */
+  token?: TokenKey;
 }): Promise<{ swapId: Hex; lockHash: Hex; buyer: Address }> {
-  if (!HTLC_ADDRESS) throw new Error("VITE_HTLC_ADDRESS not set");
+  const { tokenAddress, htlcAddress, symbol } = tokenCtx(params.token);
   const wallet = createWalletClient({
     chain: CHAIN,
     transport: custom(ethereum()),
@@ -182,22 +204,22 @@ export async function approveAndLock(params: {
     transport: custom(ethereum()),
   });
 
-  // Scale by the token's REAL decimals (Base USDC is 6, but a mock token used in
-  // a test deployment may differ — hardcoding 6 there made the amount look like
-  // <0.000001 in the wallet).
-  const decimals = await getUsdcDecimals();
+  // Scale by the token's REAL decimals (Base USDC is 6, wNOCK is 16, and a mock
+  // token used in a test deployment may differ — hardcoding made the amount look
+  // like <0.000001 in the wallet).
+  const decimals = await getTokenDecimals(params.token);
   const amountAtomic = toAtomic(params.amountUsdc, decimals);
-  if (amountAtomic <= 0n) throw new Error("USDC amount must be greater than 0");
+  if (amountAtomic <= 0n) throw new Error(`${symbol} amount must be greater than 0`);
 
   const balance = await publicClient.readContract({
-    address: USDC_ADDRESS,
+    address: tokenAddress,
     abi: ERC20_ABI,
     functionName: "balanceOf",
     args: [account],
   });
   if (balance < amountAtomic) {
     throw new Error(
-      `Insufficient USDC: have ${formatUnits(balance, decimals)}, need ${params.amountUsdc}`
+      `Insufficient ${symbol}: have ${formatUnits(balance, decimals)}, need ${params.amountUsdc}`
     );
   }
 
@@ -207,35 +229,35 @@ export async function approveAndLock(params: {
     amount: amountAtomic,
     hashlock: params.hashlock,
     timelock: params.timelock,
-  });
+  }, params.token);
 
   // Approve only when the existing allowance is insufficient, and confirm the
   // approval is mined+successful BEFORE locking — otherwise lock's transferFrom
   // reverts (the "transaction was not approved" symptom).
   const allowance = await publicClient.readContract({
-    address: USDC_ADDRESS,
+    address: tokenAddress,
     abi: ERC20_ABI,
     functionName: "allowance",
-    args: [account, HTLC_ADDRESS],
+    args: [account, htlcAddress],
   });
   if (allowance < amountAtomic) {
     const approveHash = await wallet.writeContract({
-      address: USDC_ADDRESS,
+      address: tokenAddress,
       abi: ERC20_ABI,
       functionName: "approve",
-      args: [HTLC_ADDRESS, amountAtomic],
+      args: [htlcAddress, amountAtomic],
       account,
     });
     const approveReceipt = await publicClient.waitForTransactionReceipt({
       hash: approveHash,
     });
     if (approveReceipt.status !== "success") {
-      throw new Error("USDC approve transaction failed — try again");
+      throw new Error(`${symbol} approve transaction failed — try again`);
     }
   }
 
   const lockHash = await wallet.writeContract({
-    address: HTLC_ADDRESS,
+    address: htlcAddress,
     abi: HTLC_ABI,
     functionName: "lock",
     args: [params.seller, amountAtomic, params.hashlock, params.timelock],
@@ -245,18 +267,18 @@ export async function approveAndLock(params: {
     hash: lockHash,
   });
   if (lockReceipt.status !== "success") {
-    throw new Error("USDC lock transaction reverted");
+    throw new Error(`${symbol} lock transaction reverted`);
   }
   return { swapId, lockHash, buyer: account };
 }
 
-/** Buyer reclaims locked USDC after the timelock (contract enforces the deadline). */
-export async function refundUsdc(swapId: Hex): Promise<Hex> {
-  if (!HTLC_ADDRESS) throw new Error("VITE_HTLC_ADDRESS not set");
+/** Buyer reclaims the locked quote token after the timelock (contract enforces it). */
+export async function refundUsdc(swapId: Hex, token?: TokenKey): Promise<Hex> {
+  const { htlcAddress } = tokenCtx(token);
   const wallet = createWalletClient({ chain: CHAIN, transport: custom(ethereum()) });
   const [account] = await wallet.getAddresses();
   return wallet.writeContract({
-    address: HTLC_ADDRESS,
+    address: htlcAddress,
     abi: HTLC_ABI,
     functionName: "refund",
     args: [swapId],
@@ -273,12 +295,16 @@ export interface OnchainLock {
 }
 
 /** Read a swap's on-chain state (for refund availability + status). */
-export async function getOnchainLock(swapId: Hex): Promise<OnchainLock | null> {
-  if (!HTLC_ADDRESS) return null;
+export async function getOnchainLock(
+  swapId: Hex,
+  token?: TokenKey
+): Promise<OnchainLock | null> {
+  const t = tokenInfo(token);
+  if (!t.htlc) return null;
   const client = createPublicClient({ chain: CHAIN, transport: custom(ethereum()) });
   const [buyer, seller, amount, , , withdrawn, refunded] =
     await client.readContract({
-      address: HTLC_ADDRESS,
+      address: t.htlc,
       abi: HTLC_ABI,
       functionName: "getLock",
       args: [swapId],
@@ -287,11 +313,12 @@ export async function getOnchainLock(swapId: Hex): Promise<OnchainLock | null> {
 }
 
 /** Current swap fee in basis points (for fee/net display). */
-export async function getFeeBps(): Promise<number> {
-  if (!HTLC_ADDRESS) return 50;
+export async function getFeeBps(token?: TokenKey): Promise<number> {
+  const t = tokenInfo(token);
+  if (!t.htlc) return 50;
   const client = createPublicClient({ chain: CHAIN, transport: custom(ethereum()) });
   const bps = await client.readContract({
-    address: HTLC_ADDRESS,
+    address: t.htlc,
     abi: HTLC_ABI,
     functionName: "feeBps",
   });
@@ -301,15 +328,17 @@ export async function getFeeBps(): Promise<number> {
 export async function withdrawUsdc(params: {
   swapId: Hex;
   preimageJam: Uint8Array;
+  /** Quote token (default USDC). */
+  token?: TokenKey;
 }): Promise<Hex> {
-  if (!HTLC_ADDRESS) throw new Error("VITE_HTLC_ADDRESS not set");
+  const { htlcAddress } = tokenCtx(params.token);
   const wallet = createWalletClient({
     chain: CHAIN,
     transport: custom(ethereum()),
   });
   const [account] = await wallet.getAddresses();
   return wallet.writeContract({
-    address: HTLC_ADDRESS,
+    address: htlcAddress,
     abi: HTLC_ABI,
     functionName: "withdraw",
     args: [
@@ -330,24 +359,31 @@ export function toAtomic(amount: string, decimals: number): bigint {
   return BigInt(w || "0") * 10n ** BigInt(decimals) + BigInt(frac || "0");
 }
 
-let cachedUsdcDecimals: number | null = null;
+const cachedDecimals = new Map<string, number>();
 
-/** Read (and cache) the USDC token's decimals from chain. */
-export async function getUsdcDecimals(): Promise<number> {
-  if (cachedUsdcDecimals != null) return cachedUsdcDecimals;
+/** Read (and cache) a quote token's decimals from chain (USDC 6, wNOCK 16, …). */
+export async function getTokenDecimals(token?: TokenKey): Promise<number> {
+  const { address } = tokenInfo(token);
+  const hit = cachedDecimals.get(address);
+  if (hit != null) return hit;
   const client = createPublicClient({ chain: CHAIN, transport: custom(ethereum()) });
   const d = await client.readContract({
-    address: USDC_ADDRESS,
+    address,
     abi: ERC20_ABI,
     functionName: "decimals",
   });
-  cachedUsdcDecimals = Number(d);
-  return cachedUsdcDecimals;
+  cachedDecimals.set(address, Number(d));
+  return Number(d);
 }
 
-/** Human USDC amount → atomic units, using the token's real on-chain decimals. */
-export async function usdcToAtomic(amount: string): Promise<bigint> {
-  return toAtomic(amount, await getUsdcDecimals());
+/** @deprecated alias for `getTokenDecimals()` (USDC). */
+export function getUsdcDecimals(): Promise<number> {
+  return getTokenDecimals();
+}
+
+/** Human quote amount → atomic units, using the token's real on-chain decimals. */
+export async function usdcToAtomic(amount: string, token?: TokenKey): Promise<bigint> {
+  return toAtomic(amount, await getTokenDecimals(token));
 }
 
 /** @deprecated assumes 6 decimals; prefer `usdcToAtomic`. Kept for tests/back-compat. */

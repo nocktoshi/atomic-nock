@@ -63,6 +63,17 @@ export class SwapRepository {
     return this.listByPrefix(`${NOCK_IDX}${pkh}:`);
   }
 
+  /** Marketplace: open swaps anyone can browse (no auth needed). */
+  async listOpen(): Promise<SwapPublic[]> {
+    const recs = await this.api.listOpen();
+    return recs.map((r) => decodeSwapParams(JSON.stringify(r)));
+  }
+
+  /** Seller cancels their own unclaimed open swap (removes it everywhere). */
+  cancel(hEvm: string): Promise<void> {
+    return this.api.cancel(hEvm);
+  }
+
   private async listByPrefix(prefix: string): Promise<SwapPublic[]> {
     // Listing is authenticated and server-scoped to the caller's own pkh.
     const keys = await this.api.listKeys(prefix);

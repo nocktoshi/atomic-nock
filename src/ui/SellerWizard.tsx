@@ -14,7 +14,7 @@ import type { SwapRepository } from "../app/repo/swap-repo.js";
 import { generateSwapAction, withdrawUsdcAction } from "../actions/seller.js";
 import type { SessionValue } from "./session.js";
 import { getSwapRepository } from "../app/repo/swap-repo.js";
-import { DEFAULT_NOCK_REFUND_DELTA } from "../config.js";
+import { DEFAULT_NOCK_REFUND_DELTA, TOKENS } from "../config.js";
 import { secretStore } from "../app/storage/secret-store.js";
 import { useSession } from "./session.js";
 import { useLog, LogBox, type LogApi } from "./log.js";
@@ -27,6 +27,7 @@ import {
   swapUrl,
   nicksToNock,
   nockToNicks,
+  quoteDisplay,
   NICKS_PER_NOCK,
   short,
   useResolvedNock,
@@ -66,35 +67,70 @@ const patch = (
 function GenerateBody({ swap, setSwap }: SellerCtx) {
   const giftNock = swap?.nockGift != null ? Number(swap.nockGift) / NICKS_PER_NOCK : 0;
   const usdcNum = parseFloat(swap?.usdcAmount ?? "");
+  const quote = quoteDisplay(swap);
   const priceHint =
     giftNock > 0 && usdcNum > 0
-      ? `≈ $${(usdcNum / giftNock).toFixed(4)} per NOCK  ·  ${(
-          giftNock / usdcNum
-        ).toFixed(2)} NOCK per USDC`
+      ? quote.kind === "usd"
+        ? `≈ $${(usdcNum / giftNock).toFixed(4)} per NOCK  ·  ${(
+            giftNock / usdcNum
+          ).toFixed(2)} NOCK per USDC`
+        : `≈ ${(usdcNum / giftNock).toFixed(4)} ${quote.symbol} per NOCK`
       : "";
+  const wnockReady = Boolean(TOKENS.WNOCK.htlc);
   return (
     <div>
       <p className="hint">
         Your Nockchain and Base addresses come from your connected wallets — the buyer
         only enters theirs.
       </p>
-      <label>NOCK Amount</label>
-      <input
-        type="number"
-        step="1"
-        min="50"
-        value={nicksToNock(swap?.nockGift)}
-        onChange={(e) => patch(setSwap, { nockGift: nockToNicks(e.target.value) })}
-      />
-      <label>USDC amount (buyer pays)</label>
-      <input
-        type="number"
-        step="0.01"
-        min="0.10"
-        value={swap?.usdcAmount ?? ""}
-        onChange={(e) => patch(setSwap, { usdcAmount: e.target.value })}
-      />
-      <span className="addr-resolve-hint">{priceHint}</span>
+      <div className="swap-interface">
+        <div className="swap-panel">
+          <span className="swap-panel-label">You sell</span>
+          <div className="swap-panel-row">
+            <input
+              className="swap-amount"
+              type="number"
+              min="50"
+              placeholder="0"
+              value={nicksToNock(swap?.nockGift)}
+              onChange={(e) => patch(setSwap, { nockGift: nockToNicks(e.target.value) })}
+            />
+            <div className="swap-token static" aria-label="NOCK">
+              NOCK
+            </div>
+          </div>
+        </div>
+        <div className="swap-connector" aria-hidden="true">
+          <span>↓</span>
+        </div>
+        <div className="swap-panel">
+          <span className="swap-panel-label">Buyer pays</span>
+          <div className="swap-panel-row">
+            <input
+              className="swap-amount"
+              type="number"
+              min={quote.kind === "usd" ? "0.10" : "1"}
+              placeholder="0"
+              value={swap?.usdcAmount ?? ""}
+              onChange={(e) => patch(setSwap, { usdcAmount: e.target.value })}
+            />
+            <select
+              className="swap-token"
+              value={swap?.token ?? "USDC"}
+              onChange={(e) =>
+                patch(setSwap, { token: e.target.value as SwapPublic["token"] })
+              }
+              aria-label="Buyer pays with"
+            >
+              <option value="USDC">USDC</option>
+              <option value="WNOCK" disabled={!wnockReady}>
+                {wnockReady ? "wNOCK" : "wNOCK soon"}
+              </option>
+            </select>
+          </div>
+        </div>
+        {priceHint && <span className="addr-resolve-hint swap-rate">{priceHint}</span>}
+      </div>
       <AddressField
         label="Buyer Nockchain Address — leave blank for an open swap (buyer claims via link)"
         kind="nock"
@@ -117,15 +153,8 @@ function GenerateBody({ swap, setSwap }: SellerCtx) {
 }
 
 function LockBody({ swap, nock, log, logErr, consolidateNotes }: SellerCtx) {
-  const giftNock =
-    swap?.nockGift != null ? Number(swap.nockGift) / NICKS_PER_NOCK : NaN;
-  const usdcNum = parseFloat(swap?.usdcAmount ?? "");
-  const pricePerNock =
-    Number.isFinite(giftNock) && giftNock > 0 && Number.isFinite(usdcNum) && usdcNum > 0
-      ? usdcNum / giftNock
-      : null;
+  const quote = quoteDisplay(swap);
   const sellLabel = swap?.nockGift != null ? `${nicksToNock(swap.nockGift)} NOCK` : "—";
-  const receiveLabel = Number.isFinite(usdcNum) ? `$${usdcNum.toFixed(2)}` : "—";
   const buyer = useResolvedNock(swap?.buyerPkh, short(swap?.buyerPkh, 8, 6));
 
   const [consolidating, setConsolidating] = useState(false);
@@ -169,12 +198,12 @@ function LockBody({ swap, nock, log, logErr, consolidateNotes }: SellerCtx) {
         </div>
         <div className="swap-card-row">
           <span className="k">Receive</span>
-          <span className="v">{receiveLabel}</span>
+          <span className="v">{quote.amountLabel}</span>
         </div>
-        {pricePerNock != null && (
+        {quote.priceLabel && (
           <div className="swap-card-row">
             <span className="k">Price</span>
-            <span className="v">${pricePerNock.toFixed(4)} / NOCK</span>
+            <span className="v">{quote.priceLabel}</span>
           </div>
         )}
       </div>
@@ -199,15 +228,15 @@ function LockBody({ swap, nock, log, logErr, consolidateNotes }: SellerCtx) {
         </span>
       </div>
       <p className="fee-disclaimer">
-        Fee: a 0.5% protocol fee is deducted from the USDC withdrawal.
+        Fee: a 0.5% protocol fee is deducted from the {quote.symbol} withdrawal.
       </p>
     </div>
   );
 }
 
 function WithdrawBody({ swap }: SellerCtx) {
-  const usdcNum = parseFloat(swap?.usdcAmount ?? "");
-  const withdrawLabel = Number.isFinite(usdcNum) ? `$${usdcNum.toFixed(2)}` : "—";
+  const quote = quoteDisplay(swap);
+  const withdrawLabel = quote.amountLabel;
   const soldLabel = swap?.nockGift != null ? `${nicksToNock(swap.nockGift)} NOCK` : "—";
   const lockTx = swap?.nockLockTxId;
 
@@ -233,21 +262,15 @@ function WithdrawBody({ swap }: SellerCtx) {
       </div>
       <p className="fee-disclaimer">
         {swap?.usdcLockTxHash
-          ? `Buyer locked ${swap.usdcAmount ?? "?"} USDC. Time to claim!`
-          : "Waiting for the buyer to lock USDC on Base."}
+          ? `Buyer locked ${swap.usdcAmount ?? "?"} ${quote.symbol}. Time to claim!`
+          : `Waiting for the buyer to lock ${quote.symbol} on Base.`}
       </p>
     </div>
   );
 }
 
 function DoneBody({ swap }: SellerCtx) {
-  const giftNock =
-    swap?.nockGift != null ? Number(swap.nockGift) / NICKS_PER_NOCK : NaN;
-  const usdcNum = parseFloat(swap?.usdcAmount ?? "");
-  const pricePerNock =
-    Number.isFinite(giftNock) && giftNock > 0 && Number.isFinite(usdcNum) && usdcNum > 0
-      ? usdcNum / giftNock
-      : null;
+  const quote = quoteDisplay(swap);
   const amountLabel = swap?.nockGift != null ? `${nicksToNock(swap.nockGift)} NOCK` : "—";
   const buyer = useResolvedNock(swap?.buyerPkh, short(swap?.buyerPkh, 8, 6));
 
@@ -259,10 +282,14 @@ function DoneBody({ swap }: SellerCtx) {
           <span className="k">Amount</span>
           <span className="v">{amountLabel}</span>
         </div>
-        {pricePerNock != null && (
+        <div className="swap-card-row">
+          <span className="k">Received</span>
+          <span className="v">{quote.amountLabel}</span>
+        </div>
+        {quote.priceLabel && (
           <div className="swap-card-row">
             <span className="k">Price</span>
-            <span className="v">${pricePerNock.toFixed(4)} / NOCK</span>
+            <span className="v">{quote.priceLabel}</span>
           </div>
         )}
         {swap?.buyerPkh && (
@@ -290,9 +317,15 @@ const steps: WizardStep<SellerCtx>[] = [
       if (!Number.isFinite(nockAmount) || nockAmount < 50) {
         throw new Error("Minimum NOCK amount is 50 NOCK.");
       }
-      const usdcAmount = parseFloat(swap?.usdcAmount ?? "");
-      if (!Number.isFinite(usdcAmount) || usdcAmount < 0.1) {
-        throw new Error("Minimum USDC amount is $0.10.");
+      const quote = quoteDisplay(swap);
+      const quoteAmount = parseFloat(swap?.usdcAmount ?? "");
+      const minQuote = quote.kind === "usd" ? 0.1 : 1;
+      if (!Number.isFinite(quoteAmount) || quoteAmount < minQuote) {
+        throw new Error(
+          quote.kind === "usd"
+            ? "Minimum USDC amount is $0.10."
+            : `Minimum ${quote.symbol} amount is ${minQuote} ${quote.symbol}.`
+        );
       }
       if (!evm) throw new Error("Connect MetaMask (Base).");
       if (!nock) throw new Error("Connect Iris (Nockchain wallet).");
@@ -305,6 +338,7 @@ const steps: WizardStep<SellerCtx>[] = [
         usdcAmount: swap.usdcAmount!,
         gift: swap.nockGift!.toString(), // already nicks
         refundHeight: swap.nockRefundHeight?.toString() ?? "",
+        token: swap.token,
       });
       setSwap(created.swap);
       await secretStore.putSellerPreimage(created.swap.hEvm, created.preimageJam);

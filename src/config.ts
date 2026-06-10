@@ -1,9 +1,6 @@
 import type { Address } from "viem";
 import { base } from "viem/chains";
 
-/** Set explicitly to override; empty = same-origin Vite proxy in dev or public RPC. */
-export const ENVOY_URL = (import.meta.env.VITE_ENVOY_URL ?? "").trim();
-
 export const NOCK_GRPC_UPSTREAM =
   import.meta.env.VITE_NOCK_GRPC_UPSTREAM ?? "https://rpc.nockchain.net";
 
@@ -22,10 +19,53 @@ export const USDC_ADDRESS =
 export const HTLC_ADDRESS = (import.meta.env.VITE_HTLC_ADDRESS ??
   "0x5ac37e7A63b107d226d0b88129B8EB8b07172B75") as Address;
 
+/** Wrapped NOCK on Base (symbol "NOCK" on-chain; shown as "wNOCK" in the UI). */
+export const WNOCK_ADDRESS =
+  "0x9B5E262cF9bb04869ab40b19AF91D2dc85761722" as Address;
+
+/** HTLC instance for wNOCK swaps. Empty until deployed — wNOCK is hidden in the UI. */
+export const WNOCK_HTLC_ADDRESS = (
+  import.meta.env.VITE_HTLC_ADDRESS_WNOCK ?? "0x606b807C32F15D28EB612eecB2A1603399a66545"
+).trim() as Address | "";
+
+// --- Quote-token registry ------------------------------------------------------
+// The Base leg of a swap pays one of these tokens. Swap records carry an optional
+// `token` key; absent means USDC (every swap created before multi-asset support).
+// The `usdc*` field names on SwapPublic are wire-stable and mean "the Base
+// quote-asset leg" regardless of token.
+
+export type TokenKey = "USDC" | "WNOCK";
+
+export interface TokenInfo {
+  key: TokenKey;
+  /** ERC20 contract on Base. */
+  address: Address;
+  /** AtomicNock HTLC instance for this token ("" = not deployed yet). */
+  htlc: Address | "";
+  /** UI label (wNOCK's on-chain symbol is literally "NOCK"; we disambiguate). */
+  symbol: string;
+  /** "usd" prices as $/NOCK; "nock" prices as a wNOCK/NOCK ratio. */
+  kind: "usd" | "nock";
+}
+
+export const TOKENS: Record<TokenKey, TokenInfo> = {
+  USDC: { key: "USDC", address: USDC_ADDRESS, htlc: HTLC_ADDRESS, symbol: "USDC", kind: "usd" },
+  WNOCK: { key: "WNOCK", address: WNOCK_ADDRESS, htlc: WNOCK_HTLC_ADDRESS, symbol: "wNOCK", kind: "nock" },
+};
+
+/** Resolve a swap's quote token; absent/unknown ⇒ USDC (pre-multi-asset records). */
+export function tokenInfo(token?: string): TokenInfo {
+  return TOKENS[(token ?? "USDC") as TokenKey] ?? TOKENS.USDC;
+}
+
 /** Swap API base URL (the Worker). Empty in dev = in-memory store (not durable). */
 const kvFromEnv = (import.meta.env.VITE_KV_URL ?? "").trim();
 export const KV_URL =
   kvFromEnv || (import.meta.env.PROD ? "https://api.atomicnock.com" : "");
+
+/** VAPID public key for browser push (base64url). Empty = push hidden in the UI.
+ *  Generate a pair with: npx web-push generate-vapid-keys */
+export const VAPID_PUBLIC_KEY = (import.meta.env.VITE_VAPID_PUBLIC_KEY ?? "BDCjukBFgMmy5W7a-yiyzxLf-CeHkRIrQIDoFb6ckjOT0XrYNmpO34qhTcAGnHsn8mQguhWgtEnZz0gXVcU93M8").trim();
 
 /** Market price feed (NOCK/USD). Empty in dev = price hidden. */
 const priceFromEnv = (import.meta.env.VITE_PRICE_URL ?? "").trim();

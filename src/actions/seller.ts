@@ -1,5 +1,6 @@
 import type { Hex, Address } from "viem";
 import type { SwapPublic } from "../swap.js";
+import type { TokenKey } from "../config.js";
 import type { LockNockResult, LockNockPreview } from "../nock/lock.js";
 
 type LockNockFull = LockNockResult & { preview: LockNockPreview };
@@ -55,6 +56,8 @@ export async function generateSwapAction(
     usdcAmount: string;
     gift: string;
     refundHeight: string;
+    /** Quote token on Base; absent = USDC. */
+    token?: TokenKey;
   },
   deps?: GenerateSwapDeps
 ): Promise<{ swap: SwapPublic; preimageJam: Uint8Array; refundHeight: bigint }> {
@@ -100,6 +103,7 @@ export async function generateSwapAction(
     nockRefundHeight: refundHeight,
     usdcTimelock,
     nockGift: gift,
+    token: input.token,
   };
 
   return { swap, preimageJam, refundHeight };
@@ -177,16 +181,23 @@ export async function lockNockAction(
 // ---------------------------------------------------------------------------
 
 export interface WithdrawUsdcDeps {
-  usdcToAtomic(amount: string): Promise<bigint>;
-  computeSwapId(params: {
-    seller: Hex;
-    buyer: Hex;
-    amount: bigint;
-    hashlock: Hex;
-    timelock: bigint;
-  }): Promise<Hex>;
+  usdcToAtomic(amount: string, token?: TokenKey): Promise<bigint>;
+  computeSwapId(
+    params: {
+      seller: Hex;
+      buyer: Hex;
+      amount: bigint;
+      hashlock: Hex;
+      timelock: bigint;
+    },
+    token?: TokenKey
+  ): Promise<Hex>;
   getSellerPreimage(hEvm: Hex): Promise<Uint8Array | null>;
-  withdrawUsdc(params: { swapId: Hex; preimageJam: Uint8Array }): Promise<Hex>;
+  withdrawUsdc(params: {
+    swapId: Hex;
+    preimageJam: Uint8Array;
+    token?: TokenKey;
+  }): Promise<Hex>;
 }
 
 async function defaultWithdrawUsdcDeps(): Promise<WithdrawUsdcDeps> {
@@ -212,24 +223,27 @@ export async function withdrawUsdcAction(
   if (!swap.sellerEth || !swap.buyerEth) {
     throw new Error("Buyer must lock USDC before you can withdraw");
   }
-  if (!swap.usdcAmount) throw new Error("Swap is missing the USDC amount");
+  if (!swap.usdcAmount) throw new Error("Swap is missing the quote amount");
   const d = deps ?? (await defaultWithdrawUsdcDeps());
 
-  const amount = await d.usdcToAtomic(swap.usdcAmount);
-  const id = await d.computeSwapId({
-    seller: swap.sellerEth,
-    buyer: swap.buyerEth,
-    amount,
-    hashlock: swap.hEvm,
-    timelock: swap.usdcTimelock,
-  });
+  const amount = await d.usdcToAtomic(swap.usdcAmount, swap.token);
+  const id = await d.computeSwapId(
+    {
+      seller: swap.sellerEth,
+      buyer: swap.buyerEth,
+      amount,
+      hashlock: swap.hEvm,
+      timelock: swap.usdcTimelock,
+    },
+    swap.token
+  );
   const preimageJam = await d.getSellerPreimage(swap.hEvm);
   if (!preimageJam) {
     throw new Error(
       "Preimage not found on this device — withdraw must run on the machine that created the swap"
     );
   }
-  const hash = await d.withdrawUsdc({ swapId: id, preimageJam });
+  const hash = await d.withdrawUsdc({ swapId: id, preimageJam, token: swap.token });
   swap.usdcWithdrawTxHash = hash;
   return { hash, swap };
 }

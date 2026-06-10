@@ -7,6 +7,8 @@ import { getSwapRepository } from "../app/repo/swap-repo.js";
 import { SessionProvider, useSession } from "./session.js";
 import { WalletBar } from "./WalletBar.js";
 import { Dashboard } from "./Dashboard.js";
+import { Marketplace } from "./Marketplace.js";
+import { Settings } from "./Settings.js";
 import { SellerWizard } from "./SellerWizard.js";
 import { BuyerWizard } from "./BuyerWizard.js";
 import { NICKS_PER_NOCK } from "./util.js";
@@ -17,6 +19,26 @@ function BackToDashboard() {
     <button type="button" className="role-back" onClick={() => navigate("/")}>
       ← Dashboard
     </button>
+  );
+}
+
+/** Browse open orders (public). */
+function MarketRoute() {
+  return (
+    <div className="role-flow">
+      <BackToDashboard />
+      <Marketplace />
+    </div>
+  );
+}
+
+/** Notifications + RPC settings. */
+function SettingsRoute() {
+  return (
+    <div className="role-flow">
+      <BackToDashboard />
+      <Settings />
+    </div>
   );
 }
 
@@ -126,6 +148,8 @@ export function App() {
       </div>
       <Routes>
         <Route path="/" element={<Dashboard />} />
+        <Route path="/market" element={<MarketRoute />} />
+        <Route path="/settings" element={<SettingsRoute />} />
         <Route path="/new" element={<NewSwapRoute />} />
         <Route path="/swap/:id" element={<SwapRoute />} />
         <Route path="*" element={<Dashboard />} />

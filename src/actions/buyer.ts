@@ -1,5 +1,6 @@
 import type { Hex, Address } from "viem";
 import type { SwapPublic } from "../swap.js";
+import type { TokenKey } from "../config.js";
 import type { Digest, Nicks } from "@nockbox/iris-sdk/wasm";
 
 
@@ -21,16 +22,17 @@ export interface LockUsdcDeps {
     amountUsdc: string;
     hashlock: Hex;
     timelock: bigint;
+    token?: TokenKey;
   }): Promise<{ swapId: Hex; lockHash: Hex; buyer: Address }>;
-  htlcAddressSet(): boolean;
+  htlcAddressSet(token?: TokenKey): boolean;
 }
 
 async function defaultLockUsdcDeps(): Promise<LockUsdcDeps> {
-  const [{ approveAndLock }, { HTLC_ADDRESS }] = await Promise.all([
+  const [{ approveAndLock }, { tokenInfo }] = await Promise.all([
     import("../evm/htlc.js"),
     import("../config.js"),
   ]);
-  return { approveAndLock, htlcAddressSet: () => Boolean(HTLC_ADDRESS) };
+  return { approveAndLock, htlcAddressSet: (token) => Boolean(tokenInfo(token).htlc) };
 }
 
 export async function lockUsdcAction(
@@ -38,21 +40,24 @@ export async function lockUsdcAction(
   deps?: LockUsdcDeps
 ): Promise<{ swapId: Hex; lockTxHash: Hex; swap: SwapPublic }> {
   const d = deps ?? (await defaultLockUsdcDeps());
-  if (!d.htlcAddressSet()) {
+  if (!d.htlcAddressSet(input.swap.token)) {
     throw new Error(
-      "Set VITE_HTLC_ADDRESS in .env at the repo root (see .env.example), then restart the dev server"
+      input.swap.token === "WNOCK"
+        ? "wNOCK HTLC not deployed — set VITE_HTLC_ADDRESS_WNOCK"
+        : "Set VITE_HTLC_ADDRESS in .env at the repo root (see .env.example), then restart the dev server"
     );
   }
   if (!input.swap.sellerEth) {
     throw new Error("Swap is missing the seller's Base address — ask the seller to re-share");
   }
-  if (!input.swap.usdcAmount) throw new Error("Swap is missing the USDC amount");
+  if (!input.swap.usdcAmount) throw new Error("Swap is missing the quote amount");
 
   const { swapId, lockHash, buyer } = await d.approveAndLock({
     seller: input.swap.sellerEth,
     amountUsdc: input.swap.usdcAmount,
     hashlock: input.swap.hEvm,
     timelock: input.swap.usdcTimelock,
+    token: input.swap.token,
   });
   input.swap.buyerEth = buyer;
   input.swap.usdcLockTxHash = lockHash;
@@ -64,9 +69,10 @@ export async function lockUsdcAction(
 // ---------------------------------------------------------------------------
 
 export interface PreimageDeps {
-  getPreimageFromWithdrawTx(tx: Hex): Promise<Uint8Array>;
+  getPreimageFromWithdrawTx(tx: Hex, token?: TokenKey): Promise<Uint8Array>;
   findPreimageFromSwapWithdraw(
-    swapId: Hex
+    swapId: Hex,
+    token?: TokenKey
   ): Promise<{ txHash: string; preimageJam: Uint8Array }>;
   assertPreimageMatchesHNock(jam: Uint8Array, hNock: Digest): Promise<void>;
 }
@@ -104,18 +110,21 @@ export async function resolvePreimage(
   // path so the buyer never has to paste a hash once the seller has withdrawn.
   const withdrawTx = (input.withdrawTx.trim() || input.swap.usdcWithdrawTxHash || "") as Hex | "";
   if (withdrawTx) {
-    const jam = await d.getPreimageFromWithdrawTx(withdrawTx);
+    const jam = await d.getPreimageFromWithdrawTx(withdrawTx, input.swap.token);
     await d.assertPreimageMatchesHNock(jam, input.swap.hNock);
     return { preimageJam: jam, txHash: withdrawTx };
   }
 
   if (!input.swapId) {
     throw new Error(
-      "Preimage not loaded — the seller has not withdrawn USDC on Base yet. Once they do, it loads automatically (or paste their withdraw tx hash)."
+      "Preimage not loaded — the seller has not withdrawn on Base yet. Once they do, it loads automatically (or paste their withdraw tx hash)."
     );
   }
 
-  const { txHash, preimageJam } = await d.findPreimageFromSwapWithdraw(input.swapId);
+  const { txHash, preimageJam } = await d.findPreimageFromSwapWithdraw(
+    input.swapId,
+    input.swap.token
+  );
   await d.assertPreimageMatchesHNock(preimageJam, input.swap.hNock);
   return { preimageJam, txHash };
 }
@@ -196,15 +205,18 @@ export async function claimNockAction(
 // ---------------------------------------------------------------------------
 
 export interface RefundUsdcDeps {
-  usdcToAtomic(amount: string): Promise<bigint>;
-  computeSwapId(params: {
-    seller: Hex;
-    buyer: Hex;
-    amount: bigint;
-    hashlock: Hex;
-    timelock: bigint;
-  }): Promise<Hex>;
-  refundUsdc(swapId: Hex): Promise<Hex>;
+  usdcToAtomic(amount: string, token?: TokenKey): Promise<bigint>;
+  computeSwapId(
+    params: {
+      seller: Hex;
+      buyer: Hex;
+      amount: bigint;
+      hashlock: Hex;
+      timelock: bigint;
+    },
+    token?: TokenKey
+  ): Promise<Hex>;
+  refundUsdc(swapId: Hex, token?: TokenKey): Promise<Hex>;
 }
 
 async function defaultRefundUsdcDeps(): Promise<RefundUsdcDeps> {
@@ -220,18 +232,21 @@ export async function refundUsdcAction(
   if (!swap.sellerEth || !swap.buyerEth) {
     throw new Error("Swap has no on-chain lock to refund");
   }
-  if (!swap.usdcAmount) throw new Error("Swap is missing the USDC amount");
+  if (!swap.usdcAmount) throw new Error("Swap is missing the quote amount");
   const d = deps ?? (await defaultRefundUsdcDeps());
 
-  const amount = await d.usdcToAtomic(swap.usdcAmount);
-  const id = await d.computeSwapId({
-    seller: swap.sellerEth,
-    buyer: swap.buyerEth,
-    amount,
-    hashlock: swap.hEvm,
-    timelock: swap.usdcTimelock,
-  });
-  const hash = await d.refundUsdc(id);
+  const amount = await d.usdcToAtomic(swap.usdcAmount, swap.token);
+  const id = await d.computeSwapId(
+    {
+      seller: swap.sellerEth,
+      buyer: swap.buyerEth,
+      amount,
+      hashlock: swap.hEvm,
+      timelock: swap.usdcTimelock,
+    },
+    swap.token
+  );
+  const hash = await d.refundUsdc(id, swap.token);
   swap.usdcRefundTxHash = hash;
   return { hash, swap };
 }

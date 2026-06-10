@@ -1,5 +1,6 @@
 /** Shared display helpers and small hooks for the React UI. */
 import { useEffect, useState } from "react";
+import { tokenInfo } from "../config.js";
 import { reverseResolveNock } from "./name-resolve.js";
 
 export const NICKS_PER_NOCK = 65536;
@@ -25,6 +26,47 @@ export function nicksToNock(nicks: bigint | undefined | null): string {
 export function nockToNicks(nock: string): bigint | undefined {
   const n = parseFloat(nock);
   return Number.isFinite(n) ? BigInt(Math.round(n * NICKS_PER_NOCK)) : undefined;
+}
+
+/** Token-aware quote formatting for swap cards: amount + price label. USDC
+ *  renders dollars ($1.50, $0.0200 / NOCK); wNOCK renders the token amount and
+ *  a ratio (50 wNOCK, 1.0200 wNOCK / NOCK). */
+export function quoteDisplay(swap: {
+  token?: "USDC" | "WNOCK";
+  usdcAmount?: string;
+  nockGift?: bigint;
+}): { symbol: string; kind: "usd" | "nock"; amountLabel: string; priceLabel: string | null } {
+  const t = tokenInfo(swap.token);
+  const quoteNum = parseFloat(swap.usdcAmount ?? "");
+  const giftNock = swap.nockGift != null ? Number(swap.nockGift) / NICKS_PER_NOCK : NaN;
+  const amountLabel = !Number.isFinite(quoteNum)
+    ? "—"
+    : t.kind === "usd"
+      ? `$${quoteNum.toFixed(2)}`
+      : `${parseFloat(quoteNum.toFixed(6))} ${t.symbol}`;
+  const priceLabel =
+    Number.isFinite(quoteNum) && quoteNum > 0 && Number.isFinite(giftNock) && giftNock > 0
+      ? t.kind === "usd"
+        ? `$${(quoteNum / giftNock).toFixed(4)} / NOCK`
+        : `${(quoteNum / giftNock).toFixed(4)} ${t.symbol} / NOCK`
+      : null;
+  return { symbol: t.symbol, kind: t.kind, amountLabel, priceLabel };
+}
+
+/** Approximate creation time (epoch seconds) for sorting: server `createdAt`
+ *  when present, else the quote timelock (creation + a fixed window — close
+ *  enough to order legacy records). */
+export function swapCreatedAt(s: { createdAt?: number; usdcTimelock?: bigint }): number {
+  if (typeof s.createdAt === "number") return s.createdAt;
+  return s.usdcTimelock != null ? Number(s.usdcTimelock) : 0;
+}
+
+/** Comparator: newest swap first. */
+export function byNewestSwap(
+  a: { createdAt?: number; usdcTimelock?: bigint },
+  b: { createdAt?: number; usdcTimelock?: bigint }
+): number {
+  return swapCreatedAt(b) - swapCreatedAt(a);
 }
 
 /** Truncate a wallet address for a button label: first 8 + … + last 6. */

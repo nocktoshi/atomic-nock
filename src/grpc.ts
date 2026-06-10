@@ -1,26 +1,29 @@
+import { getNockRpcOverride, DEFAULT_NOCK_RPC } from "./app/settings.js";
+
 /** gRPC-Web endpoint.
- * - Dev: same-origin Vite proxy → `VITE_NOCK_GRPC_UPSTREAM` (ignore Envoy unless you run `make envoy`)
- * - Prod: `VITE_ENVOY_URL` if set, else `VITE_NOCK_GRPC_UPSTREAM`, else public nockchain RPC
+ * - User override (Settings → Nockchain RPC; localStorage + profile-synced) wins
+ *   everywhere — it must be a grpc-web endpoint with browser CORS enabled.
+ * - Dev: same-origin Vite proxy → `VITE_NOCK_GRPC_UPSTREAM`
  */
 export function getGrpcWebUrl(): string {
+  const override = getNockRpcOverride();
+  if (override) return override.replace(/\/$/, "");
+
   const upstream = (import.meta.env.VITE_NOCK_GRPC_UPSTREAM ?? "").trim();
 
   if (import.meta.env.DEV && typeof window !== "undefined") {
     return window.location.origin;
   }
 
-  const envoy = (import.meta.env.VITE_ENVOY_URL ?? "").trim();
-  if (envoy) return envoy.replace(/\/$/, "");
   if (upstream) return upstream.replace(/\/$/, "");
-  return "https://rpc.nockchain.net";
+  return DEFAULT_NOCK_RPC;
 }
 
 /** Human hint when the browser cannot reach the gRPC-Web endpoint at all. */
 export function grpcFetchFailureHint(endpoint: string): string {
   if (/localhost:8080|127\.0\.0\.1:8080/.test(endpoint)) {
     return (
-      "gRPC-Web points at Envoy (:8080) but nothing is listening. " +
-      "Clear VITE_ENVOY_URL in .env (use the Vite dev proxy) or run `make envoy`."
+      "gRPC-Web points at Envoy (:8080) but nothing is listening. "
     );
   }
   if (import.meta.env.DEV) {
@@ -30,8 +33,7 @@ export function grpcFetchFailureHint(endpoint: string): string {
     );
   }
   return (
-    "Browser could not reach the Nock gRPC endpoint (network/CORS). " +
-    "Use the Vite dev server proxy or set VITE_ENVOY_URL to a grpc-web gateway."
+    "Browser could not reach the Nock gRPC endpoint (network/CORS). "
   );
 }
 

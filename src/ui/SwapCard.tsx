@@ -1,7 +1,7 @@
 /** Click-to-copy swap summary card (React port of swap-card.ts). */
 import { useState } from "react";
 import type { SwapPublic } from "../swap.js";
-import { short, formatNock, copyText, useResolvedNock } from "./util.js";
+import { short, formatNock, copyText, quoteDisplay, useResolvedNock } from "./util.js";
 
 function Row({ k, v }: { k: string; v: string }) {
   return (
@@ -28,6 +28,7 @@ function PartyRow({ k, address }: { k: string; address?: string }) {
 export function SwapCard({ swap, json }: { swap: SwapPublic; json: string }) {
   const [copyLabel, setCopyLabel] = useState("Copy JSON");
   const [copied, setCopied] = useState(false);
+  const quote = quoteDisplay(swap);
 
   async function onCopy() {
     const ok = await copyText(json);
@@ -53,10 +54,13 @@ export function SwapCard({ swap, json }: { swap: SwapPublic; json: string }) {
       <PartyRow k="Seller" address={swap.sellerPkh} />
       <PartyRow k="Buyer" address={swap.buyerPkh} />
       <Row k="Amount" v={formatNock(swap.nockGift ?? 0n)} />
+      {swap.usdcAmount && <Row k="For" v={quote.amountLabel} />}
       <Row k="Refund height" v={(swap.nockRefundHeight ?? 0n).toString()} />
       {swap.lockFirstName && <Row k="Claim name" v={short(swap.lockFirstName)} />}
       {swap.nockLockTxId && <Row k="NOCK lock tx" v={short(swap.nockLockTxId)} />}
-      {swap.usdcLockTxHash && <Row k="USDC lock tx" v={short(swap.usdcLockTxHash)} />}
+      {swap.usdcLockTxHash && (
+        <Row k={`${quote.symbol} lock tx`} v={short(swap.usdcLockTxHash)} />
+      )}
     </div>
   );
 }

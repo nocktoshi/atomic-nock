@@ -19,7 +19,7 @@ import { useSession, type SessionValue } from "./session.js";
 import { useLog, LogBox, type LogApi } from "./log.js";
 import { Wizard, type WizardStep } from "./Wizard.js";
 import { SwapCard } from "./SwapCard.js";
-import { nicksToNock, short, useResolvedNock } from "./util.js";
+import { nicksToNock, quoteDisplay, short, useResolvedNock } from "./util.js";
 
 /** On-chain state of the seller's NOCK lock, as the buyer verifies it. */
 type LockCheck = "waiting" | "verifying" | "confirmed" | "mismatch";
@@ -62,6 +62,7 @@ function stepForSwap(swap: DraftSwap, myPkh: string | undefined): number {
 function ClaimSwapBody({ swap, evm, nock }: BuyerCtx) {
   const claimedByOther = !!swap?.buyerPkh && swap.buyerPkh !== nock.pkh;
   const giftNock = swap?.nockGift != null ? nicksToNock(swap.nockGift) : "—";
+  const quote = quoteDisplay(swap ?? {});
   const seller = useResolvedNock(swap?.sellerPkh, short(swap?.sellerPkh, 8, 6));
   return (
     <div>
@@ -78,7 +79,7 @@ function ClaimSwapBody({ swap, evm, nock }: BuyerCtx) {
         </div>
         <div className="swap-card-row">
           <span className="k">You pay</span>
-          <span className="v">{swap?.usdcAmount ? `$${swap.usdcAmount}` : "—"}</span>
+          <span className="v">{quote.amountLabel}</span>
         </div>
       </div>
       {claimedByOther ? (
@@ -88,7 +89,7 @@ function ClaimSwapBody({ swap, evm, nock }: BuyerCtx) {
       ) : (
         <p className="hint">
           Claiming commits your wallets to this swap: NOCK is sent to your Iris
-          address and you'll lock USDC from {short(evm, 6, 4)}. No addresses to type.
+          address and you'll lock {quote.symbol} from {short(evm, 6, 4)}. No addresses to type.
         </p>
       )}
     </div>
@@ -96,12 +97,13 @@ function ClaimSwapBody({ swap, evm, nock }: BuyerCtx) {
 }
 
 function LockBody({ swap, lockCheck }: BuyerCtx) {
+  const quote = quoteDisplay(swap ?? {});
   return (
     <div>
       <div className="swap-order-summary">
         <div className="swap-card-row">
           <span className="k">You pay</span>
-          <span className="v">{swap?.usdcAmount ? `$${swap.usdcAmount}` : "—"}</span>
+          <span className="v">{quote.amountLabel}</span>
         </div>
         <div className="swap-card-row">
           <span className="k">You receive</span>
@@ -110,19 +112,19 @@ function LockBody({ swap, lockCheck }: BuyerCtx) {
       </div>
       {lockCheck === "confirmed" ? (
         <p className="preimage-status ok">
-          ✓ Seller's NOCK lock is confirmed on-chain and locked to your wallet — safe to lock USDC.
+          ✓ Seller's NOCK lock is confirmed on-chain and locked to your wallet — safe to lock {quote.symbol}.
         </p>
       ) : lockCheck === "mismatch" ? (
         <p className="log error">
-          ⚠️ This swap is not safe to lock USDC into (wrong NOCK lock, or unsafe
+          ⚠️ This swap is not safe to lock {quote.symbol} into (wrong NOCK lock, or unsafe
           timelocks — see the message below). Do not proceed; ask the seller to
           re-post, or walk away.
         </p>
       ) : (
         <p className="fee-disclaimer">
           {lockCheck === "verifying"
-            ? "Verifying the seller's NOCK lock on-chain… you can lock USDC once it's confirmed."
-            : "Waiting for the seller to lock NOCK on Nockchain. Don't lock USDC until it's confirmed on-chain."}
+            ? `Verifying the seller's NOCK lock on-chain… you can lock ${quote.symbol} once it's confirmed.`
+            : `Waiting for the seller to lock NOCK on Nockchain. Don't lock ${quote.symbol} until it's confirmed on-chain.`}
         </p>
       )}
       <p className="fee-disclaimer">
@@ -146,12 +148,12 @@ function PreimageBody({
           ? `Preimage ready (${preimageLen} bytes).`
           : hasWithdraw
             ? "Seller has withdrawn — loading the preimage from Base automatically…"
-            : "After the seller withdraws USDC, the preimage loads from Base automatically."}
+            : "After the seller withdraws on Base, the preimage loads automatically."}
       </p>
       <label>Seller withdraw tx (optional — only if auto-load fails)</label>
       <input
         pattern="^0x[0-9a-fA-F]{64}$"
-        placeholder="0x… from seller after USDC withdraw"
+        placeholder="0x… from seller after their Base withdraw"
         value={withdrawTx}
         onChange={(e) => setWithdrawTx(e.target.value)}
       />
@@ -184,7 +186,7 @@ function ClaimNockBody({ swap, preimageReady, preimageLen, hasWithdraw }: BuyerC
           ? `Preimage ready (${preimageLen} bytes).`
           : hasWithdraw
             ? "Loading preimage from Base automatically…"
-            : "Preimage will load once the seller withdraws USDC on Base."}
+            : "Preimage will load once the seller withdraws on Base."}
       </p>
     </div>
   );
@@ -220,22 +222,22 @@ const steps: WizardStep<BuyerCtx>[] = [
     canAdvance: ({ swap, evm }) => !swap?.buyerPkh && !!evm,
     async onNext({ swap, setSwap, evm, repo, log }) {
       if (!swap?.hEvm) throw new Error("No swap selected");
-      if (!evm) throw new Error("Connect MetaMask (Base) to claim — you lock USDC from it.");
+      if (!evm) throw new Error("Connect MetaMask (Base) to claim — you lock the quote token from it.");
       const committed = await repo.claim(swap.hEvm, evm);
       setSwap(committed);
-      log("Swap claimed — you're committed as the buyer. Now lock USDC.", true);
+      log(`Swap claimed — you're committed as the buyer. Now lock ${quoteDisplay(committed).symbol}.`, true);
     },
   },
   {
     id: "lock-usdc",
-    title: "Lock USDC",
-    nextLabel: "Lock USDC",
+    title: ({ swap }) => `Lock ${quoteDisplay(swap ?? {}).symbol}`,
+    nextLabel: ({ swap }) => `Lock ${quoteDisplay(swap ?? {}).symbol}`,
     Body: LockBody,
     // Only lock USDC once the seller's NOCK lock is confirmed on-chain.
     canAdvance: ({ lockCheck }) => lockCheck === "confirmed",
     async onNext({ swap, setSwap, repo, log, setEvmSwapId, nock }) {
       if (!swap?.lockFirstName || swap.nockGift == null) {
-        throw new Error("Wait for the seller to lock NOCK before locking your USDC.");
+        throw new Error(`Wait for the seller to lock NOCK before locking your ${quoteDisplay(swap).symbol}.`);
       }
       // Re-verify on-chain right before locking — the gate could be stale.
       const { ok, reason } = await verifyNockLockConfirmed(nock, {
@@ -251,7 +253,7 @@ const steps: WizardStep<BuyerCtx>[] = [
         nockRefundHeight: swap.nockRefundHeight,
       });
       if (!ok) {
-        throw new Error(`Won't lock USDC — ${reason ?? "NOCK lock not verified on-chain"}.`);
+        throw new Error(`Won't lock ${quoteDisplay(swap).symbol} — ${reason ?? "NOCK lock not verified on-chain"}.`);
       }
       const { swapId, lockTxHash, swap: locked } = await lockUsdcAction({
         swap: swap as SwapPublic,
@@ -259,7 +261,7 @@ const steps: WizardStep<BuyerCtx>[] = [
       setSwap(locked);
       setEvmSwapId(swapId);
       await repo.put(locked);
-      log(`USDC locked.\nswapId: ${swapId}\ntx: ${lockTxHash}`, true);
+      log(`${quoteDisplay(swap).symbol} locked.\nswapId: ${swapId}\ntx: ${lockTxHash}`, true);
     },
   },
   {
@@ -392,11 +394,11 @@ export function BuyerWizard({
         if (ok) {
           setSwap(fresh);
           setLockCheck("confirmed");
-          log("Seller's NOCK lock confirmed on-chain — safe to lock USDC.", true);
+          log(`Seller's NOCK lock confirmed on-chain — safe to lock ${quoteDisplay(swap ?? {}).symbol}.`, true);
         } else if (fatal) {
           // Hard failure (wrong lock, or unsafe timelocks) — stop and warn.
           setLockCheck("mismatch");
-          logErr(new Error(`Unsafe to lock USDC — ${reason}`));
+          logErr(new Error(`Unsafe to lock ${quoteDisplay(swap ?? {}).symbol} — ${reason}`));
         }
         // else: transient (note not on-chain yet, height unreadable) → keep polling.
       } catch {
@@ -438,7 +440,7 @@ export function BuyerWizard({
       .join(" and ");
     return (
       <>
-        <h2 className="flow-title">Buyer (USDC → NOCK)</h2>
+        <h2 className="flow-title">Buyer ({quoteDisplay(swap ?? {}).symbol} → NOCK)</h2>
         <p className="hint">
           Connect {missing} using the buttons above to participate in a swap.
         </p>
@@ -468,7 +470,7 @@ export function BuyerWizard({
 
   return (
     <>
-      <h2 className="flow-title">Buyer (USDC → NOCK)</h2>
+      <h2 className="flow-title">Buyer ({quoteDisplay(swap ?? {}).symbol} → NOCK)</h2>
       <Wizard
         steps={steps}
         index={index}

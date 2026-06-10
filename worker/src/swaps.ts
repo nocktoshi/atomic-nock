@@ -14,15 +14,51 @@ import {
   type SwapRecord,
 } from "./contract.js";
 
+import type { RateLimiter } from "./ratelimit.js";
+
 export interface Env {
   SWAPS: KVNamespace;
   SESSION_SECRET?: string;
   KV_TOKEN?: string; // server-only admin secret (never shipped to the browser)
+  /** Rate limiters (wrangler.toml [[ratelimits]]); optional so dev/tests skip them. */
+  RL_READ?: RateLimiter;
+  RL_WRITE?: RateLimiter;
+  RL_AUTH?: RateLimiter;
+  /** Telegram notifications (secrets via `wrangler secret put`). */
+  TELEGRAM_BOT_TOKEN?: string;
+  TELEGRAM_WEBHOOK_SECRET?: string;
+  /** Bot username (var, not secret) for the t.me deep link, e.g. "AtomicNockBot". */
+  TELEGRAM_BOT_NAME?: string;
+  /** Web Push VAPID keys (public+subject are vars; private via `wrangler secret put`). */
+  VAPID_PUBLIC_KEY?: string;
+  VAPID_PRIVATE_KEY?: string;
+  VAPID_SUBJECT?: string;
+  /** Email via Resend (key is a secret; from-address is a var). */
+  RESEND_API_KEY?: string;
+  EMAIL_FROM?: string;
+  /** Site base URL for notification deep links (default https://atomicnock.com). */
+  APP_URL?: string;
 }
 
 const SWAP_PREFIX = "swap:";
 const ETH_IDX = "idx:eth:";
 const NOCK_IDX = "idx:nock:";
+/** Marketplace index: one key per OPEN (buyer-less) swap; removed on claim/cancel. */
+const OPEN_IDX = "idx:open:";
+
+/** Hide open swaps whose quote-leg refund opens sooner than this — too stale to fill. */
+const MIN_OPEN_WINDOW_SEC = 3600;
+
+/** Quote tokens the Base leg may pay. Absent on a record = USDC (pre-multi-asset). */
+const ALLOWED_TOKENS = ["USDC", "WNOCK"] as const;
+
+/**
+ * Swaps expire 30 days after their LAST write (every claim/advance refreshes the
+ * TTL). The full swap lifecycle is bounded to ~30h, so an active swap can never
+ * expire mid-flight; finished ones age out of KV. Funds are never at risk from
+ * expiry — the preimage lives client-side and on-chain state is authoritative.
+ */
+const SWAP_TTL_SECONDS = 30 * 24 * 3600;
 
 export class SwapError extends Error {
   constructor(public status: number, message: string) {
@@ -61,14 +97,16 @@ export async function loadSwap(env: Env, hEvm: string): Promise<SwapRecord | nul
 
 async function writeSwap(env: Env, rec: SwapRecord): Promise<void> {
   const key = id(rec.hEvm);
-  await env.SWAPS.put(SWAP_PREFIX + key, JSON.stringify(rec));
+  const opts = { expirationTtl: SWAP_TTL_SECONDS };
+  await env.SWAPS.put(SWAP_PREFIX + key, JSON.stringify(rec), opts);
   // Maintain participant indexes (idempotent; values point back at the id).
+  // Same TTL as the record so index keys can't outlive (or dangle past) it.
   const idx: string[] = [];
   if (rec.sellerEth) idx.push(`${ETH_IDX}${String(rec.sellerEth).toLowerCase()}:${key}`);
   if (rec.buyerEth) idx.push(`${ETH_IDX}${String(rec.buyerEth).toLowerCase()}:${key}`);
   if (rec.sellerPkh) idx.push(`${NOCK_IDX}${rec.sellerPkh}:${key}`);
   if (rec.buyerPkh) idx.push(`${NOCK_IDX}${rec.buyerPkh}:${key}`);
-  await Promise.all(idx.map((k) => env.SWAPS.put(k, key)));
+  await Promise.all(idx.map((k) => env.SWAPS.put(k, key, opts)));
 }
 
 const REQUIRED_AT_CREATE = [
@@ -102,6 +140,12 @@ export async function createSwap(
   if (swap.sellerPkh !== sessionPkh) {
     throw new SwapError(403, "sellerPkh must match the signed-in wallet");
   }
+  if (
+    swap.token != null &&
+    !ALLOWED_TOKENS.includes(swap.token as (typeof ALLOWED_TOKENS)[number])
+  ) {
+    throw new SwapError(400, `unknown token "${String(swap.token)}"`);
+  }
   if (await loadSwap(env, swap.hEvm)) {
     throw new SwapError(409, "swap already exists");
   }
@@ -110,9 +154,16 @@ export async function createSwap(
     ...(swap as SwapRecord),
     hEvm: swap.hEvm,
     sellerPkh: sessionPkh,
+    createdAt: Math.floor(Date.now() / 1000), // server-stamped; client sort key
     version: 1,
   };
   await writeSwap(env, rec);
+  // An open (buyer-less) swap is listable in the marketplace until claimed.
+  if (!rec.buyerPkh) {
+    await env.SWAPS.put(OPEN_IDX + id(rec.hEvm), id(rec.hEvm), {
+      expirationTtl: SWAP_TTL_SECONDS,
+    });
+  }
   return rec;
 }
 
@@ -144,7 +195,74 @@ export async function claimSwap(
     version: (prev.version ?? 1) + 1,
   };
   await writeSwap(env, rec);
+  await env.SWAPS.delete(OPEN_IDX + id(hEvm)); // claimed → off the marketplace
   return rec;
+}
+
+/**
+ * Seller cancels an OPEN swap. Only allowed while nothing exists on-chain:
+ * no committed buyer and no NOCK locked. Deletes the record and every index.
+ */
+export async function cancelSwap(
+  env: Env,
+  hEvm: string,
+  sessionPkh: string
+): Promise<void> {
+  const prev = await loadSwap(env, hEvm);
+  if (!prev) throw new SwapError(404, "swap not found");
+  if (prev.sellerPkh !== sessionPkh) {
+    throw new SwapError(403, "only the seller may cancel a swap");
+  }
+  if (prev.buyerPkh || prev.buyerEth) {
+    throw new SwapError(409, "swap already claimed — it can no longer be cancelled");
+  }
+  if (prev.lockFirstName || prev.nockLockTxId) {
+    throw new SwapError(409, "NOCK already locked — refund it instead of cancelling");
+  }
+  const key = id(hEvm);
+  const keys = [SWAP_PREFIX + key, OPEN_IDX + key];
+  if (prev.sellerEth) keys.push(`${ETH_IDX}${String(prev.sellerEth).toLowerCase()}:${key}`);
+  if (prev.sellerPkh) keys.push(`${NOCK_IDX}${prev.sellerPkh}:${key}`);
+  await Promise.all(keys.map((k) => env.SWAPS.delete(k)));
+}
+
+/**
+ * Marketplace listing: open swaps, newest first. Filters records that were
+ * claimed/expired out from under their index entry (and lazily deletes those
+ * index keys). Public — swap metadata is already readable via GET /swap/:id.
+ */
+export async function listOpenSwaps(
+  env: Env,
+  cursor?: string,
+  limit = 50
+): Promise<{ swaps: SwapRecord[]; cursor?: string; complete: boolean }> {
+  const capped = Math.min(Math.max(Math.floor(limit) || 50, 1), 50);
+  const page = await env.SWAPS.list({ prefix: OPEN_IDX, cursor, limit: capped });
+  const now = Math.floor(Date.now() / 1000);
+
+  const out: SwapRecord[] = [];
+  const stale: string[] = [];
+  await Promise.all(
+    page.keys.map(async (k) => {
+      const hEvm = k.name.slice(OPEN_IDX.length);
+      const rec = await loadSwap(env, hEvm);
+      const timelock = Number(rec?.usdcTimelock ?? 0);
+      if (!rec || rec.buyerPkh || timelock <= now + MIN_OPEN_WINDOW_SEC) {
+        stale.push(k.name);
+        return;
+      }
+      out.push(rec);
+    })
+  );
+  // Lazy cleanup — never block the response on it.
+  await Promise.all(stale.map((k) => env.SWAPS.delete(k).catch(() => {})));
+
+  out.sort((a, b) => Number(b.createdAt ?? 0) - Number(a.createdAt ?? 0));
+  return {
+    swaps: out,
+    cursor: page.list_complete ? undefined : page.cursor,
+    complete: page.list_complete,
+  };
 }
 
 /**
