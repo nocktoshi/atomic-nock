@@ -5,12 +5,10 @@ import {
   type SwapPublic,
   type DraftSwap,
 } from "../../swap.js";
-import { getKvStore, type KvStore } from "../storage/index.js";
 import { getSwapApi, type SwapApi } from "./swap-api.js";
 import { getActiveWallet } from "../auth.js";
 import { progressFields } from "../swap-fields.js";
 
-const SWAP_PREFIX = "swap:";
 const ETH_IDX = "idx:eth:";
 const NOCK_IDX = "idx:nock:";
 
@@ -35,14 +33,12 @@ function roleFor(swap: DraftSwap): "seller" | "buyer" {
  * One `put` replaces all the old scattered localStorage `save*Json` calls.
  */
 export class SwapRepository {
-  constructor(
-    private readonly kv: KvStore,
-    private readonly api: SwapApi
-  ) {}
+  constructor(private readonly api: SwapApi) {}
 
   async get(hEvm: string): Promise<SwapPublic | null> {
-    const raw = await this.kv.get(SWAP_PREFIX + hEvm.toLowerCase());
-    return raw ? decodeSwapParams(raw) : null;
+    // GET /swap/:id endpoint
+    const rec = await this.api.get(hEvm);
+    return rec ? decodeSwapParams(JSON.stringify(rec)) : null;
   }
 
   /** Create a new (possibly open / buyer-less) swap. Seller-authenticated. */
@@ -85,7 +81,7 @@ export class SwapRepository {
 let instance: SwapRepository | null = null;
 
 export function getSwapRepository(): SwapRepository {
-  if (!instance) instance = new SwapRepository(getKvStore(), getSwapApi());
+  if (!instance) instance = new SwapRepository(getSwapApi());
   return instance;
 }
 

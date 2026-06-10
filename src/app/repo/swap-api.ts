@@ -23,6 +23,8 @@ export interface SwapApi {
   claim(hEvm: string, buyerEth: string): Promise<SwapRecord>;
   /** Write a party's progress fields. */
   advance(hEvm: string, fields: Record<string, unknown>): Promise<SwapRecord>;
+  /** Read a single swap by id (open read, no auth). Null if not found. */
+  get(hEvm: string): Promise<SwapRecord | null>;
   /** List index keys under a prefix (authenticated; server restricts to your own). */
   listKeys(prefix: string): Promise<string[]>;
 }
@@ -59,6 +61,22 @@ class HttpSwapApi implements SwapApi {
   advance(hEvm: string, fields: Record<string, unknown>): Promise<SwapRecord> {
     return this.post(`/swap/${encodeURIComponent(hEvm)}/advance`, { fields });
   }
+  async get(hEvm: string): Promise<SwapRecord | null> {
+    // Open read — the worker serves the record at GET /swap/:id (bare id; it
+    // prepends the `swap:` key prefix itself). 404 means no such swap.
+    const res = await fetch(`${this.baseUrl}/swap/${encodeURIComponent(hEvm.toLowerCase())}`);
+    if (res.status === 404) return null;
+    if (!res.ok) {
+      let msg = "";
+      try {
+        msg = ((await res.json()) as { error?: string }).error ?? "";
+      } catch {
+        /* ignore */
+      }
+      throw new Error(msg || `swap read failed (${res.status})`);
+    }
+    return (await res.json()) as SwapRecord;
+  }
   async listKeys(prefix: string): Promise<string[]> {
     const token = await ensureSession(this.baseUrl);
     const res = await fetch(`${this.baseUrl}/list?prefix=${encodeURIComponent(prefix)}`, {
@@ -89,6 +107,10 @@ export class MemorySwapApi implements SwapApi {
   private async load(hEvm: string): Promise<Record<string, unknown> | null> {
     const raw = await this.kv.get(SWAP_PREFIX + this.id(hEvm));
     return raw ? (JSON.parse(raw) as Record<string, unknown>) : null;
+  }
+
+  get(hEvm: string): Promise<SwapRecord | null> {
+    return this.load(hEvm);
   }
 
   private async write(rec: Record<string, unknown>): Promise<void> {

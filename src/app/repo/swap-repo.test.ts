@@ -6,10 +6,10 @@ import { MemoryKvStore } from "../storage/memory-kv.js";
 import { SwapRepository } from "./swap-repo.js";
 import { MemorySwapApi } from "./swap-api.js";
 
-/** A repo backed by a single in-memory KV (reads) + matching SwapApi (writes). */
+/** A repo backed by a MemorySwapApi over a single in-memory KV. */
 function makeRepo() {
   const kv = new MemoryKvStore();
-  return new SwapRepository(kv, new MemorySwapApi(kv));
+  return new SwapRepository(new MemorySwapApi(kv));
 }
 
 function makeSwap(over: Partial<SwapPublic> = {}): SwapPublic {
