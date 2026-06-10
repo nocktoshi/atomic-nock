@@ -386,17 +386,18 @@ const steps: WizardStep<SellerCtx>[] = [
   },
   {
     id: "withdraw-usdc",
-    title: "Withdraw USDC",
-    nextLabel: "Withdraw USDC",
+    title: ({ swap }) => `Withdraw ${quoteDisplay(swap).symbol}`,
+    nextLabel: ({ swap }) => `Withdraw ${quoteDisplay(swap).symbol}`,
     Body: WithdrawBody,
     canAdvance: ({ swap }) => !!swap?.usdcLockTxHash,
     async onNext({ swap, setSwap, repo, log }) {
+      const quote = quoteDisplay(swap);
       const { hash, swap: withdrawn } = await withdrawUsdcAction({
         swap: swap as SwapPublic,
       });
       setSwap(withdrawn);
       await repo.put(withdrawn);
-      log(`USDC withdrawn — preimage public on Base.\ntx: ${hash}`, true);
+      log(`${quote.symbol} withdrawn — preimage public on Base.\ntx: ${hash}`, true);
     },
   },
   {
