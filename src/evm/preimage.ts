@@ -6,6 +6,7 @@ import {
 } from "viem";
 import { CHAIN, tokenInfo, type TokenKey } from "../config.js";
 import { HTLC_ABI } from "./htlc.js";
+import { getProvider } from "./providers.js";
 import { hexToBytes } from "../swap.js";
 
 /** The HTLC instance for a swap's quote token (default USDC); throws if unset. */
@@ -21,16 +22,10 @@ function htlcAddressFor(token?: TokenKey): Hex {
   return t.htlc;
 }
 
-function ethereum() {
-  const eth = (window as Window & { ethereum?: object }).ethereum;
-  if (!eth) throw new Error("No wallet (install MetaMask)");
-  return eth as import("viem").EIP1193Provider;
-}
-
 function publicClient() {
   return createPublicClient({
     chain: CHAIN,
-    transport: custom(ethereum()),
+    transport: custom(getProvider()),
   });
 }
 

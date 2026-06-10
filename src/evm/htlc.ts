@@ -7,6 +7,7 @@ import {
   type Hex,
 } from "viem";
 import { CHAIN, CHAIN_ID, tokenInfo, type TokenKey } from "../config.js";
+import { getProvider } from "./providers.js";
 
 /** Resolve the ERC20 + HTLC addresses for a swap's quote token (default USDC). */
 function tokenCtx(token?: TokenKey): {
@@ -137,16 +138,10 @@ const ERC20_ABI = [
   },
 ] as const;
 
-function ethereum() {
-  const eth = (window as Window & { ethereum?: object }).ethereum;
-  if (!eth) throw new Error("No wallet (install MetaMask)");
-  return eth as import("viem").EIP1193Provider;
-}
-
 export async function connectWallet(): Promise<Address> {
   const wallet = createWalletClient({
     chain: CHAIN,
-    transport: custom(ethereum()),
+    transport: custom(getProvider()),
   });
   const [address] = await wallet.requestAddresses();
   const chainId = await wallet.getChainId();
@@ -168,7 +163,7 @@ export async function computeSwapId(
 ): Promise<Hex> {
   const client = createPublicClient({
     chain: CHAIN,
-    transport: custom(ethereum()),
+    transport: custom(getProvider()),
   });
   const { htlcAddress } = tokenCtx(token);
   return client.readContract({
@@ -196,12 +191,12 @@ export async function approveAndLock(params: {
   const { tokenAddress, htlcAddress, symbol } = tokenCtx(params.token);
   const wallet = createWalletClient({
     chain: CHAIN,
-    transport: custom(ethereum()),
+    transport: custom(getProvider()),
   });
   const [account] = await wallet.getAddresses();
   const publicClient = createPublicClient({
     chain: CHAIN,
-    transport: custom(ethereum()),
+    transport: custom(getProvider()),
   });
 
   // Scale by the token's REAL decimals (Base USDC is 6, wNOCK is 16, and a mock
@@ -275,7 +270,7 @@ export async function approveAndLock(params: {
 /** Buyer reclaims the locked quote token after the timelock (contract enforces it). */
 export async function refundUsdc(swapId: Hex, token?: TokenKey): Promise<Hex> {
   const { htlcAddress } = tokenCtx(token);
-  const wallet = createWalletClient({ chain: CHAIN, transport: custom(ethereum()) });
+  const wallet = createWalletClient({ chain: CHAIN, transport: custom(getProvider()) });
   const [account] = await wallet.getAddresses();
   return wallet.writeContract({
     address: htlcAddress,
@@ -301,7 +296,7 @@ export async function getOnchainLock(
 ): Promise<OnchainLock | null> {
   const t = tokenInfo(token);
   if (!t.htlc) return null;
-  const client = createPublicClient({ chain: CHAIN, transport: custom(ethereum()) });
+  const client = createPublicClient({ chain: CHAIN, transport: custom(getProvider()) });
   const [buyer, seller, amount, , , withdrawn, refunded] =
     await client.readContract({
       address: t.htlc,
@@ -316,7 +311,7 @@ export async function getOnchainLock(
 export async function getFeeBps(token?: TokenKey): Promise<number> {
   const t = tokenInfo(token);
   if (!t.htlc) return 50;
-  const client = createPublicClient({ chain: CHAIN, transport: custom(ethereum()) });
+  const client = createPublicClient({ chain: CHAIN, transport: custom(getProvider()) });
   const bps = await client.readContract({
     address: t.htlc,
     abi: HTLC_ABI,
@@ -334,7 +329,7 @@ export async function withdrawUsdc(params: {
   const { htlcAddress } = tokenCtx(params.token);
   const wallet = createWalletClient({
     chain: CHAIN,
-    transport: custom(ethereum()),
+    transport: custom(getProvider()),
   });
   const [account] = await wallet.getAddresses();
   return wallet.writeContract({
@@ -366,7 +361,7 @@ export async function getTokenDecimals(token?: TokenKey): Promise<number> {
   const { address } = tokenInfo(token);
   const hit = cachedDecimals.get(address);
   if (hit != null) return hit;
-  const client = createPublicClient({ chain: CHAIN, transport: custom(ethereum()) });
+  const client = createPublicClient({ chain: CHAIN, transport: custom(getProvider()) });
   const d = await client.readContract({
     address,
     abi: ERC20_ABI,

@@ -254,6 +254,56 @@ main {
   height: 18px;
 }
 
+/* --- Multi-wallet picker (EIP-6963) --- */
+.wallet-picker {
+  position: relative;
+  display: inline-flex;
+}
+
+.wallet-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 19;
+}
+
+.wallet-menu {
+  position: absolute;
+  top: calc(100% + 0.35rem);
+  right: 0;
+  z-index: 20;
+  display: flex;
+  flex-direction: column;
+  min-width: 11rem;
+  padding: 0.3rem;
+  border-radius: 0.6rem;
+  background: var(--card);
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.35);
+}
+
+.wallet-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.45rem 0.6rem;
+  border: none;
+  border-radius: 0.4rem;
+  background: transparent;
+  color: var(--text);
+  font-size: 0.85rem;
+  font-weight: 600;
+  cursor: pointer;
+  text-align: left;
+}
+
+.wallet-menu-item:hover {
+  background: var(--warn);
+}
+
+.wallet-menu-item img {
+  border-radius: 0.3rem;
+  flex-shrink: 0;
+}
+
 /* --- Dashboard --- */
 .price-banner {
   text-align: right;

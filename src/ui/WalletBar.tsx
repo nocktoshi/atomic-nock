@@ -2,9 +2,10 @@
  * Global wallet connect bar — renders into `.wallet-bar-wrap` above the content.
  * Connecting updates the shared session so the dashboard/wizards react.
  */
-import { useEffect, useState } from "react";
+import { useEffect, useState, useSyncExternalStore } from "react";
 import { connectIrisWallet } from "../nock/wallet.js";
 import { connectEvmWallet } from "../evm/wallet.js";
+import { subscribeWallets, getWalletsSnapshot } from "../evm/providers.js";
 import { createPriceProvider } from "../market/price.js";
 import { reverseResolveNock, reverseResolveEns } from "./name-resolve.js";
 import { useSession } from "./session.js";
@@ -47,6 +48,69 @@ function WalletBtn({
       />
       <span className="wallet-btn-label">{address ? truncAddr(address) : label}</span>
     </button>
+  );
+}
+
+/**
+ * Base wallet connect. With 0–1 injected wallets it's a plain button (connects
+ * the only/default provider). With several (EIP-6963), it opens a picker so the
+ * user chooses which wallet — MetaMask, Rabby, Coinbase, etc.
+ */
+function EvmConnect({
+  address,
+  busy,
+  onConnect,
+}: {
+  address: string | null;
+  busy: boolean;
+  onConnect(rdns?: string): void;
+}) {
+  const wallets = useSyncExternalStore(subscribeWallets, getWalletsSnapshot);
+  const [open, setOpen] = useState(false);
+
+  if (wallets.length <= 1) {
+    return (
+      <WalletBtn
+        iconSvg={FOX_SVG}
+        label="Connect Wallet"
+        address={address}
+        busy={busy}
+        onClick={() => onConnect(wallets[0]?.info.rdns)}
+      />
+    );
+  }
+
+  return (
+    <div className="wallet-picker">
+      <WalletBtn
+        iconSvg={FOX_SVG}
+        label="Connect Wallet"
+        address={address}
+        busy={busy}
+        onClick={() => setOpen((o) => !o)}
+      />
+      {open && (
+        <>
+          <div className="wallet-backdrop" onClick={() => setOpen(false)} />
+          <div className="wallet-menu">
+            {wallets.map((w) => (
+              <button
+                key={w.info.rdns}
+                type="button"
+                className="wallet-menu-item"
+                onClick={() => {
+                  setOpen(false);
+                  onConnect(w.info.rdns);
+                }}
+              >
+                <img src={w.info.icon} alt="" width={18} height={18} />
+                {w.info.name}
+              </button>
+            ))}
+          </div>
+        </>
+      )}
+    </div>
   );
 }
 
@@ -127,13 +191,13 @@ export function WalletBar() {
     }
   }
 
-  async function connectEvm() {
+  async function connectEvm(rdns?: string) {
     if (evmBusy) return;
     setEvmBusy(true);
     try {
-      setEvm(await connectEvmWallet());
+      setEvm(await connectEvmWallet(rdns));
     } catch (e) {
-      console.error("MetaMask connect failed:", e);
+      console.error("Wallet connect failed:", e);
     } finally {
       setEvmBusy(false);
     }
@@ -141,14 +205,10 @@ export function WalletBar() {
 
   return (
     <>
-      <WalletBtn
-        iconSvg={FOX_SVG}
-        label="Connect MetaMask"
-        address={
-          evmNameFor === evm && evmName ? evmName : evm ?? null
-        }
+      <EvmConnect
+        address={evmNameFor === evm && evmName ? evmName : evm ?? null}
         busy={evmBusy}
-        onClick={connectEvm}
+        onConnect={connectEvm}
       />
       <WalletBtn
         iconSvg={IRIS_SVG}
