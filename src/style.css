@@ -276,7 +276,7 @@ main {
   min-width: 11rem;
   padding: 0.3rem;
   border-radius: 0.6rem;
-  background: var(--card);
+  background: #c08a21f2;
   box-shadow: 0 6px 20px rgba(0, 0, 0, 0.35);
 }
 

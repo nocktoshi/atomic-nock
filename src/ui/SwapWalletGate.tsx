@@ -27,8 +27,8 @@ export function useSwapWalletStatus(swap: DraftSwap): SwapWalletStatus {
 
     if (!nock || !evm) {
       const issues: string[] = [];
-      if (!nock) issues.push("Connect Iris (Nockchain wallet).");
-      if (!evm) issues.push("Connect MetaMask (Base).");
+      if (!nock) issues.push("Connect Nockchain.");
+      if (!evm) issues.push("Connect Ethereum (Base).");
       return { nock, evm, canAct: false, role: null, issues };
     }
 
