@@ -45,6 +45,22 @@ export async function consolidateNotes(
   }
   const totalNicks = notes.reduce((sum, n) => sum + n.assets, 0n);
 
+  const nicks = (nock: bigint) => nock * 65536n;
+  const fmt = (n: bigint) => parseFloat((Number(n) / 65536).toFixed(4));
+
+  // Reserve enough to cover the network fee so the spend can balance. The recipient
+  // output carries the bulk (a value we set explicitly, so it never depends on the
+  // engine's refund math); any reserve not spent on fee comes back as a small change
+  // note (NOT lost). recalcAndSetFee (inside signAndSendIrisTx) sets the real fee.
+  const feeReserve = nicks(2n + BigInt(notes.length) * 2n);
+  const gift = totalNicks - feeReserve;
+  if (gift <= 0n) {
+    throw new Error(
+      `Balance too low to consolidate — ${fmt(totalNicks)} NOCK across ${notes.length} ` +
+        `note(s) doesn't cover the network fee.`
+    );
+  }
+
   return runStep(`Consolidate ${notes.length} notes`, async () => {
     await initIrisWasm();
     const Iris = await getIrisWasm();
@@ -62,18 +78,44 @@ export async function consolidateNotes(
     const inputNotes = notes.map((n) => n.note);
     const txLocks = inputNotes.map(() => ({ lock: inputLock, lock_sp_index: 0 }));
 
-    // Self-transfer: recipient and refund are both our own address, so the whole
-    // balance stays in-wallet. gift = 1 nick (dust to self); the bulk lands in the
-    // refund/change note, which recalcAndSetFee balances to (total − fee).
+    // Self-transfer: recipient and refund are both our own address. The recipient
+    // gets `gift` (the bulk) → the consolidated note; the refund holds the leftover
+    // fee reserve. Both stay in-wallet.
     builder.simpleSpend(
       inputNotes,
       txLocks as never,
-      sellerPkh as never, // recipient
-      "1" as never, // gift (dust)
+      sellerPkh as never, // recipient (consolidated note)
+      String(gift) as never, // gift = total − fee reserve
       undefined, // fee_override — recalcAndSetFee computes it
-      sellerPkh as never, // refund → the consolidated note
+      sellerPkh as never, // refund (leftover reserve)
       false
     );
+    builder.recalcAndSetFee(false);
+
+    // SAFETY: never sign a transaction that doesn't conserve value. Sum the built
+    // outputs and require inputs == outputs + a sane fee. This catches malformed
+    // multi-input txs (e.g. only one note's value landing in the outputs) BEFORE
+    // anything is signed or broadcast — no funds can be burned by a build bug.
+    const checkTx = builder.build();
+    const checkOuts = Iris.rawTxV1Outputs(
+      Iris.nockchainTxToRawTx(checkTx),
+      0,
+      settings
+    );
+    const outSum = checkOuts.reduce(
+      (s, o) => s + BigInt(o.assets as string | number | bigint),
+      0n
+    );
+    const feePaid = totalNicks - outSum; // inputs − outputs = fee
+    const maxFee = nicks(5n + BigInt(notes.length) * 3n);
+    if (outSum > totalNicks || feePaid < 0n || feePaid > maxFee) {
+      throw new Error(
+        `Refusing to consolidate: transaction does not conserve value — ` +
+          `${fmt(outSum)} NOCK in outputs vs ${fmt(totalNicks)} NOCK in inputs ` +
+          `(${fmt(feePaid)} NOCK unaccounted, expected a fee under ${fmt(maxFee)} NOCK). ` +
+          `Not signing. Please report this — the consolidation tx is built incorrectly.`
+      );
+    }
 
     const txId = await signAndSendIrisTx(wallet, builder, inputNotes);
     return { txId, noteCount: notes.length, totalNicks };
