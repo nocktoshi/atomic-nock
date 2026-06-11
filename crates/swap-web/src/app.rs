@@ -57,10 +57,12 @@ fn stage_label(stage: SwapStage) -> &'static str {
 }
 
 /// NOCK = the round token mark; USDC = the Circle coin + Base badge (port of TokenIcon).
+/// The CSS sizes the inner svg/img to 100%, so the span itself must carry the size
+/// (the React component passed it inline as `size=20`).
 #[component]
 fn TokenIcon(token: &'static str) -> impl IntoView {
     view! {
-        <span class="token-icon">
+        <span class="token-icon" style="width:20px;height:20px">
             {if token == "USDC" {
                 view! {
                     <svg viewBox="0 0 32 32" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
