@@ -2,11 +2,11 @@
 
 # Atomic Nock
 
-Trustless, non-custodial swap of native **NOCK** on Nockchain ↔ **USDC** or **wNOCK** on **Base mainnet**, using hash-time-locked contracts on both chains. No custodian, no KYC, no shared secret in the browser.
+Trustless, non-custodial swap of native **NOCK** on Nockchain ↔ **USDC** or **wNOCK** on **Base mainnet**, using hash-time-locked contracts on Base and Hax lock primitaves on Nockchain. No custodian, no KYC, no shared secret in the browser.
 
 ## How it works
 
-A swap is anchored by a random **preimage** the seller generates locally. From it: `H_evm = keccak256(jam)` (the Base hashlock) and `H_nock = hashNoun(jam)` (the Nockchain hashlock). The preimage never leaves the seller's browser until step 5, where revealing it on Base is what lets the buyer claim NOCK.
+A swap is anchored by a random **preimage** the seller generates locally. From it: `H_evm = keccak256(jam)` (the Base hashlock) and `H_nock = hasPreimage(jam)` (the Nockchain hashlock). The preimage never leaves the seller's browser until step 5, where revealing it on Base is what lets the buyer claim NOCK.
 
 Swaps are posted **open** — nobody types an address; addresses always come from the connected wallets:
 
