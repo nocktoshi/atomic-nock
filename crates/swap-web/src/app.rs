@@ -118,6 +118,28 @@ const ETH_SVG: &str = r##"<svg version="1.2" xmlns="http://www.w3.org/2000/svg" 
 #[component]
 fn WalletBar() -> impl IntoView {
     let s = session();
+    // Reverse-resolved wallet identities (the .nock / .eth names shown in the pill).
+    let nock_name = RwSignal::new(None::<String>);
+    let evm_name = RwSignal::new(None::<String>);
+    Effect::new(move |_| match s.nock.get() {
+        Some(n) => {
+            nock_name.set(None);
+            spawn_local(async move {
+                nock_name.set(swap_client::name_resolve::reverse_resolve_nock(&n.pkh).await);
+            });
+        }
+        None => nock_name.set(None),
+    });
+    Effect::new(move |_| match s.evm.get() {
+        Some(addr) => {
+            evm_name.set(None);
+            spawn_local(async move {
+                evm_name.set(swap_client::name_resolve::reverse_resolve_ens(&addr).await);
+            });
+        }
+        None => evm_name.set(None),
+    });
+
     // Disconnected → connect; connected → disconnect (the original opens a menu
     // with Disconnect; the dev bridge keeps it a toggle until the real wallet lands).
     let toggle_nock = move |_| {
@@ -161,14 +183,20 @@ fn WalletBar() -> impl IntoView {
         <button type="button" class=nock_cls on:click=toggle_nock>
             <span class="wallet-btn-icon" inner_html=IRIS_SVG></span>
             <span class="wallet-btn-label">
-                {move || s.nock.get().map(|n| short(&n.pkh)).unwrap_or_else(|| "Nockchain".into())}
+                {move || match s.nock.get() {
+                    Some(n) => nock_name.get().unwrap_or_else(|| short(&n.pkh)),
+                    None => "Nockchain".into(),
+                }}
             </span>
             {move || s.nock.get().is_some().then(|| view! { <span class="wallet-btn-chevron">"▾"</span> })}
         </button>
         <button type="button" class=evm_cls on:click=toggle_evm>
             <span class="wallet-btn-icon" inner_html=ETH_SVG></span>
             <span class="wallet-btn-label">
-                {move || s.evm.get().map(|a| trunc_addr(&a)).unwrap_or_else(|| "Base".into())}
+                {move || match s.evm.get() {
+                    Some(a) => evm_name.get().unwrap_or_else(|| trunc_addr(&a)),
+                    None => "Base".into(),
+                }}
             </span>
             {move || s.evm.get().is_some().then(|| view! { <span class="wallet-btn-chevron">"▾"</span> })}
         </button>

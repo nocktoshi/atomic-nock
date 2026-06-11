@@ -19,6 +19,8 @@ base64 = "0.22"
 gloo-net = "0.6"
 web-sys = { version = "0.3", features = ["Window", "Storage"] }
 js-sys = "0.3"
+# ENS namehash for reverse name resolution.
+tiny-keccak = { version = "2", features = ["keccak"] }
 
 [dev-dependencies]
 pollster = "0.4"

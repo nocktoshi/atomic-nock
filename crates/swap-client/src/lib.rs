@@ -11,6 +11,8 @@ pub mod repo;
 #[cfg(target_arch = "wasm32")]
 pub mod http;
 #[cfg(target_arch = "wasm32")]
+pub mod name_resolve;
+#[cfg(target_arch = "wasm32")]
 pub mod price;
 
 pub use api::{ApiError, MemorySwapApi, SwapApi};
