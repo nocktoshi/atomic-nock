@@ -102,12 +102,19 @@ export function SwapOverviewCard({
             </div>
           )
         )}
-        <div className="swap-card-row">
-          <span className="k">{counterLabel}</span>
-          <span className="v" title={counter.title}>
-            {counter.text}
-          </span>
-        </div>
+        {counterparty ? (
+          <div className="swap-card-row">
+            <span className="k">{counterLabel}</span>
+            <span className="v" title={counter.title}>
+              {counter.text}
+            </span>
+          </div>
+        ) : (
+          <div className="swap-card-row">
+            <span className="k">{counterLabel}</span>
+            <span className="v">— open order —</span>
+          </div>
+        )}
       </div>
 
       <div className="card-actions">

@@ -1,13 +1,45 @@
-import type { Hex } from "viem";
+import type { Address, Hex } from "viem";
+import type { Digest } from "@nockbox/iris-sdk/wasm";
 import {
   encodeSwapParams,
   decodeSwapParams,
   type SwapPublic,
   type DraftSwap,
 } from "../../swap.js";
-import { getSwapApi, type SwapApi } from "./swap-api.js";
+import type { TokenKey } from "../../config.js";
+import { getSwapApi, type SwapApi, type BidRecord } from "./swap-api.js";
 import { getActiveWallet } from "../auth.js";
 import { progressFields } from "../swap-fields.js";
+
+/**
+ * A buy order: the creator pays `quoteAmount` of `token` on Base for `nockGift`
+ * nicks of native NOCK. No hashlock yet — the FILLER generates the secret and
+ * the bid converts into a normal swap (filler = seller, creator = buyer).
+ */
+export interface BidPublic {
+  id: string;
+  creatorPkh: Digest;
+  creatorEth: Address;
+  token: TokenKey;
+  quoteAmount: string;
+  nockGift: bigint;
+  createdAt?: number;
+}
+
+/** What a bid id resolves to: still open, or converted into a swap. */
+export type BidLookup = { bid: BidPublic; filledHEvm?: never } | { bid?: never; filledHEvm: string };
+
+function decodeBid(rec: BidRecord): BidPublic {
+  return {
+    id: String(rec.id ?? ""),
+    creatorPkh: String(rec.creatorPkh ?? "") as Digest,
+    creatorEth: String(rec.creatorEth ?? "") as Address,
+    token: rec.token === "WNOCK" ? "WNOCK" : "USDC",
+    quoteAmount: String(rec.quoteAmount ?? ""),
+    nockGift: BigInt(String(rec.nockGift ?? "0")),
+    createdAt: rec.createdAt != null ? Number(rec.createdAt) : undefined,
+  };
+}
 
 const NOCK_IDX = "idx:nock:";
 
@@ -69,9 +101,52 @@ export class SwapRepository {
     return recs.map((r) => decodeSwapParams(JSON.stringify(r)));
   }
 
-  /** Seller cancels their own unclaimed open swap (removes it everywhere). */
+  /** Either participant cancels a swap while nothing is on-chain. */
   cancel(hEvm: string): Promise<void> {
     return this.api.cancel(hEvm);
+  }
+
+  /** Post a buy order: pay `quoteAmount` of `token` on Base for native NOCK. */
+  async createBid(bid: {
+    token: TokenKey;
+    quoteAmount: string;
+    nockGift: bigint;
+    creatorEth: string;
+  }): Promise<BidPublic> {
+    const rec = await this.api.createBid({
+      token: bid.token,
+      quoteAmount: bid.quoteAmount,
+      nockGift: bid.nockGift.toString(),
+      creatorEth: bid.creatorEth,
+    });
+    return decodeBid(rec);
+  }
+
+  /** Marketplace: open buy orders anyone can browse (no auth needed). */
+  async listBids(): Promise<BidPublic[]> {
+    const recs = await this.api.listBids();
+    return recs.map(decodeBid).filter((b) => b.id);
+  }
+
+  /** Read one buy order (open read): the open bid, where it went after a fill
+   *  (`{ filledHEvm }` → the swap), or null once cancelled/expired. */
+  async getBid(id: string): Promise<BidLookup | null> {
+    const rec = await this.api.getBid(id);
+    if (!rec) return null;
+    if (rec.filledHEvm) return { filledHEvm: String(rec.filledHEvm) };
+    const bid = decodeBid(rec);
+    return bid.id ? { bid } : null;
+  }
+
+  /** Fill a buy order with a freshly generated swap; returns the created swap. */
+  async fillBid(id: string, swap: SwapPublic): Promise<SwapPublic> {
+    const rec = await this.api.fillBid(id, encoded(swap));
+    return decodeSwapParams(JSON.stringify(rec));
+  }
+
+  /** Creator cancels their own open buy order. */
+  cancelBid(id: string): Promise<void> {
+    return this.api.cancelBid(id);
   }
 
   private async listByPrefix(prefix: string): Promise<SwapPublic[]> {

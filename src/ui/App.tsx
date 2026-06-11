@@ -8,26 +8,37 @@ import { SessionProvider, useSession } from "./session.js";
 import { WalletBar } from "./WalletBar.js";
 import { Dashboard } from "./Dashboard.js";
 import { Marketplace } from "./Marketplace.js";
+import { BidPage } from "./BidPage.js";
 import { Settings } from "./Settings.js";
 import { SellerWizard } from "./SellerWizard.js";
 import { BuyerWizard } from "./BuyerWizard.js";
 import { NICKS_PER_NOCK } from "./util.js";
 
-function BackToDashboard() {
+function BackToMarket() {
   const navigate = useNavigate();
   return (
     <button type="button" className="role-back" onClick={() => navigate("/")}>
-      ← Dashboard
+      ← Market
     </button>
   );
 }
 
-/** Browse open orders (public). */
-function MarketRoute() {
+/** Your swaps (participant view). */
+function DashboardRoute() {
   return (
     <div className="role-flow">
-      <BackToDashboard />
-      <Marketplace />
+      <BackToMarket />
+      <Dashboard />
+    </div>
+  );
+}
+
+/** A buy order's page — creator status view or the fill flow. */
+function BidRoute() {
+  return (
+    <div className="role-flow">
+      <BackToMarket />
+      <BidPage />
     </div>
   );
 }
@@ -36,7 +47,7 @@ function MarketRoute() {
 function SettingsRoute() {
   return (
     <div className="role-flow">
-      <BackToDashboard />
+      <BackToMarket />
       <Settings />
     </div>
   );
@@ -50,7 +61,7 @@ function NewSwapRoute() {
   }));
   return (
     <div className="role-flow">
-      <BackToDashboard />
+      <BackToMarket />
       <SellerWizard swap={swap} setSwap={setSwap} />
     </div>
   );
@@ -113,7 +124,7 @@ function SwapRoute() {
   if (status === "loading") {
     return (
       <div className="role-flow">
-        <BackToDashboard />
+        <BackToMarket />
         <p className="hint">Loading swap…</p>
       </div>
     );
@@ -122,7 +133,7 @@ function SwapRoute() {
   if (status === "notfound") {
     return (
       <div className="role-flow">
-        <BackToDashboard />
+        <BackToMarket />
         <p className="hint">Swap not found: {id}</p>
       </div>
     );
@@ -130,7 +141,7 @@ function SwapRoute() {
 
   return (
     <div className="role-flow">
-      <BackToDashboard />
+      <BackToMarket />
       {role === "seller" ? (
         <SellerWizard key={`seller-${swap.hEvm}`} swap={swap} setSwap={setSwap} />
       ) : (
@@ -147,12 +158,14 @@ export function App() {
         <WalletBar />
       </div>
       <Routes>
-        <Route path="/" element={<Dashboard />} />
-        <Route path="/market" element={<MarketRoute />} />
+        <Route path="/" element={<Marketplace />} />
+        <Route path="/market" element={<Marketplace />} />
+        <Route path="/dashboard" element={<DashboardRoute />} />
         <Route path="/settings" element={<SettingsRoute />} />
         <Route path="/new" element={<NewSwapRoute />} />
         <Route path="/swap/:id" element={<SwapRoute />} />
-        <Route path="*" element={<Dashboard />} />
+        <Route path="/bid/:id" element={<BidRoute />} />
+        <Route path="*" element={<Marketplace />} />
       </Routes>
     </SessionProvider>
   );

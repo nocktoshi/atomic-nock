@@ -18,6 +18,10 @@
  *   POST /swap/:id/advance              -> party writes their progress fields
  *   GET  /swap/:id                      -> swap record
  *   GET  /open?cursor=&limit=           -> { swaps, cursor?, complete } (marketplace)
+ *   POST /bid                           -> buy order: pay USDC/wNOCK for native NOCK
+ *   GET  /bids                          -> open buy orders (marketplace)
+ *   POST /bid/:id/fill                  -> NOCK holder fills a bid (creates the swap)
+ *   POST /bid/:id/cancel                -> creator cancels their open bid
  *   GET  /list?prefix=&cursor=&limit=   -> { keys, cursor?, complete }
  *   GET  /profile                       -> the signed-in user's profile
  *   PUT  /profile                       -> update prefs/settings
@@ -40,6 +44,7 @@ import {
   SwapError,
   type Env,
 } from "./swaps.js";
+import { createBid, listBids, cancelBid, fillBid, lookupBid } from "./bids.js";
 import {
   makeChallenge,
   validateChallenge,
@@ -168,6 +173,47 @@ export default {
         const pkh = await requireSession(req, env);
         await enforceRate(env.RL_WRITE, pkh);
         await cancelSwap(env, decodeURIComponent(cancelMatch[1]), pkh);
+        return json({ ok: true });
+      }
+
+      if (path === "/bid" && req.method === "POST") {
+        const pkh = await requireSession(req, env);
+        await enforceRate(env.RL_WRITE, pkh);
+        const body = (await req.json()) as { bid?: Record<string, unknown> };
+        const rec = await createBid(env, body.bid ?? {}, pkh);
+        return json({ ok: true, bid: rec });
+      }
+
+      const bidFillMatch = path.match(/^\/bid\/([^/]+)\/fill$/);
+      if (bidFillMatch && req.method === "POST") {
+        const pkh = await requireSession(req, env);
+        await enforceRate(env.RL_WRITE, pkh);
+        const body = (await req.json()) as { swap?: Record<string, unknown> };
+        const { swap, bid } = await fillBid(
+          env,
+          decodeURIComponent(bidFillMatch[1]),
+          body.swap ?? {},
+          pkh
+        );
+        // The bid creator (now the swap's buyer) waits for the filler's NOCK lock.
+        ctx.waitUntil(
+          dispatch(env, swap, [
+            {
+              recipientPkh: bid.creatorPkh,
+              title: "Buy order filled",
+              body: "Someone is selling you NOCK — they lock NOCK first, then you'll be prompted to lock your side on Base.",
+              url: "",
+            },
+          ])
+        );
+        return json({ ok: true, swap });
+      }
+
+      const bidCancelMatch = path.match(/^\/bid\/([^/]+)\/cancel$/);
+      if (bidCancelMatch && req.method === "POST") {
+        const pkh = await requireSession(req, env);
+        await enforceRate(env.RL_WRITE, pkh);
+        await cancelBid(env, decodeURIComponent(bidCancelMatch[1]), pkh);
         return json({ ok: true });
       }
 
@@ -320,6 +366,23 @@ export default {
         const cursor = url.searchParams.get("cursor") ?? undefined;
         const limit = Number(url.searchParams.get("limit") ?? "50");
         return json(await listOpenSwaps(env, cursor, limit));
+      }
+
+      if (path === "/bids" && req.method === "GET") {
+        // Marketplace: open buy orders anyone can browse and fill.
+        await enforceRate(env.RL_READ, clientIp(req));
+        const limit = Number(url.searchParams.get("limit") ?? "50");
+        return json({ bids: await listBids(env, limit) });
+      }
+
+      const bidGetMatch = path.match(/^\/bid\/([^/]+)$/);
+      if (bidGetMatch && req.method === "GET") {
+        await enforceRate(env.RL_READ, clientIp(req));
+        // An open bid returns the record; a filled one returns { filledHEvm }
+        // so the creator's bid page can follow it to the swap.
+        const bid = await lookupBid(env, decodeURIComponent(bidGetMatch[1]));
+        if (!bid) return json({ error: "not found" }, 404);
+        return json(bid);
       }
 
       const getMatch = path.match(/^\/swap\/([^/]+)$/);

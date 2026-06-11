@@ -48,9 +48,14 @@ The seller picks **USDC** or **wNOCK** ([`0x9B5E262cF9bb04869ab40b19AF91D2dc8576
 | USDC | [`0x5ac37e7A63b107d226d0b88129B8EB8b07172B75`](https://basescan.org/address/0x5ac37e7A63b107d226d0b88129B8EB8b07172B75#code) | 6 |
 | wNOCK | set `VITE_HTLC_ADDRESS_WNOCK` after deploying | 16 |
 
-### Marketplace
+### Marketplace (front page)
 
-`/market` lists all unclaimed open orders anyone can browse without signing in. Each card shows NOCK amount, quote price, seller (NNS-resolved), age, and expiry. "Fill order" drops directly into the existing buyer claim flow. Sellers can cancel their own unclaimed orders from the dashboard or the swap detail page.
+The marketplace is the app's home (`/`). At the top sits a Uniswap-style **swap box**: pick what you pay and what you receive — one side is always native NOCK — and post the order. Below it, the **order book** lists both sides, browsable without signing in:
+
+- **Asks** (sell NOCK): the existing open swaps. Filling one is the buyer claim flow — you pay USDC/wNOCK and receive native NOCK.
+- **Bids** (buy NOCK): buy orders posted by USDC/wNOCK holders. Filling one (`/bid/<id>`) makes you the swap's *seller*: your device generates the secret, you lock NOCK first, and the bidder — pre-committed as the buyer, including their Base address — locks the quote token next. **Same protocol, same contracts, reversed initiator**: this is how you swap wNOCK/USDC *into* native NOCK.
+
+Tabs filter by side (Buy NOCK / Sell NOCK), plus token filter (USDC / wNOCK) and sorting by age, price (USD-equivalent across tokens), or NOCK amount. Your own orders show a badge and can be cancelled in place; any swap can be cancelled by either participant while nothing is locked on-chain. Your in-flight swaps live at `/dashboard`.
 
 ### Notifications
 

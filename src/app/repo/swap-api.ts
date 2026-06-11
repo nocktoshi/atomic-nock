@@ -10,11 +10,16 @@ import { ensureSession, getActiveWallet } from "../auth.js";
 import { getKvStore, type KvStore } from "../storage/index.js";
 
 const SWAP_PREFIX = "swap:";
+const BID_PREFIX = "bid:";
+const BID_FILLED_PREFIX = "bidswap:";
 const ETH_IDX = "idx:eth:";
 const NOCK_IDX = "idx:nock:";
 
 /** A stored swap record (encoded fields + version), as returned by the Worker. */
 export type SwapRecord = Record<string, unknown>;
+
+/** A stored bid (buy order) record, as returned by the Worker. */
+export type BidRecord = Record<string, unknown>;
 
 export interface SwapApi {
   /** Create a new swap (seller). `swap` is the encoded swap object. */
@@ -29,8 +34,19 @@ export interface SwapApi {
   listKeys(prefix: string): Promise<string[]>;
   /** Marketplace: open (buyer-less) swaps, newest first (open read, no auth). */
   listOpen(): Promise<SwapRecord[]>;
-  /** Seller cancels their own unclaimed open swap. */
+  /** Either participant cancels a swap while nothing is on-chain. */
   cancel(hEvm: string): Promise<void>;
+  /** Create a buy order: pay USDC/wNOCK for native NOCK. */
+  createBid(bid: Record<string, unknown>): Promise<BidRecord>;
+  /** Marketplace: open buy orders, newest first (open read, no auth). */
+  listBids(): Promise<BidRecord[]>;
+  /** Read one buy order by id (open read). A filled bid returns
+   *  `{ filledHEvm }` pointing at the swap; null once cancelled/expired. */
+  getBid(id: string): Promise<BidRecord | null>;
+  /** Fill a buy order with a freshly generated swap (filler becomes the seller). */
+  fillBid(id: string, swap: Record<string, unknown>): Promise<SwapRecord>;
+  /** Creator cancels their own open buy order. */
+  cancelBid(id: string): Promise<void>;
 }
 
 const CACHE_TTL_MS = 45_000;
@@ -138,6 +154,40 @@ class HttpSwapApi implements SwapApi {
     await this.post(`/swap/${encodeURIComponent(hEvm)}/cancel`, {});
   }
 
+  async createBid(bid: Record<string, unknown>): Promise<BidRecord> {
+    const token = await ensureSession(this.baseUrl);
+    const res = await fetch(`${this.baseUrl}/bid`, {
+      method: "POST",
+      headers: { "content-type": "application/json", authorization: `Bearer ${token}` },
+      body: JSON.stringify({ bid }),
+    });
+    const json = (await res.json().catch(() => ({}))) as { bid?: BidRecord; error?: string };
+    if (!res.ok) throw new Error(json.error || `bid create failed (${res.status})`);
+    return json.bid ?? {};
+  }
+
+  async listBids(): Promise<BidRecord[]> {
+    const res = await fetch(`${this.baseUrl}/bids`);
+    if (!res.ok) throw new Error(`bid list failed (${res.status})`);
+    const json = (await res.json()) as { bids?: BidRecord[] };
+    return json.bids ?? [];
+  }
+
+  async getBid(id: string): Promise<BidRecord | null> {
+    const res = await fetch(`${this.baseUrl}/bid/${encodeURIComponent(id)}`);
+    if (res.status === 404) return null;
+    if (!res.ok) throw new Error(`bid read failed (${res.status})`);
+    return (await res.json()) as BidRecord;
+  }
+
+  fillBid(id: string, swap: Record<string, unknown>): Promise<SwapRecord> {
+    return this.post(`/bid/${encodeURIComponent(id)}/fill`, { swap });
+  }
+
+  async cancelBid(id: string): Promise<void> {
+    await this.post(`/bid/${encodeURIComponent(id)}/cancel`, {});
+  }
+
   async listKeys(prefix: string): Promise<string[]> {
     const token = await ensureSession(this.baseUrl);
     // The worker pages with a KV cursor; follow it up to a sane cap so one
@@ -240,8 +290,65 @@ export class MemorySwapApi implements SwapApi {
   async cancel(hEvm: string): Promise<void> {
     const rec = await this.load(hEvm);
     if (!rec) throw new Error("swap not found");
-    if (rec.buyerPkh || rec.buyerEth) throw new Error("swap already claimed");
+    if (rec.lockFirstName || rec.nockLockTxId || rec.usdcLockTxHash) {
+      throw new Error("funds already locked — refund instead of cancelling");
+    }
     await this.kv.delete(SWAP_PREFIX + this.id(hEvm));
+  }
+
+  async createBid(bid: Record<string, unknown>): Promise<BidRecord> {
+    const id = crypto.randomUUID().replace(/-/g, "");
+    const rec = {
+      ...bid,
+      id,
+      creatorPkh: bid.creatorPkh ?? getActiveWallet()?.pkh ?? "dev-bidder",
+      createdAt: Math.floor(Date.now() / 1000),
+      version: 1,
+    };
+    await this.kv.put(BID_PREFIX + id, JSON.stringify(rec));
+    return rec;
+  }
+
+  async listBids(): Promise<BidRecord[]> {
+    const keys = await this.kv.list(BID_PREFIX);
+    const bids = await Promise.all(
+      keys.map(async (k) => {
+        const raw = await this.kv.get(k);
+        return raw ? (JSON.parse(raw) as BidRecord) : null;
+      })
+    );
+    return bids
+      .filter((b): b is BidRecord => b !== null)
+      .sort((a, b) => Number(b.createdAt ?? 0) - Number(a.createdAt ?? 0));
+  }
+
+  async getBid(id: string): Promise<BidRecord | null> {
+    const raw = await this.kv.get(BID_PREFIX + id);
+    if (raw) return JSON.parse(raw) as BidRecord;
+    const hEvm = await this.kv.get(BID_FILLED_PREFIX + id);
+    return hEvm ? { filledHEvm: hEvm } : null;
+  }
+
+  async fillBid(id: string, swap: Record<string, unknown>): Promise<SwapRecord> {
+    const raw = await this.kv.get(BID_PREFIX + id);
+    if (!raw) throw new Error("bid not found (already filled or cancelled?)");
+    const bid = JSON.parse(raw) as BidRecord;
+    // Mirror the worker: economic identity is forced from the bid.
+    const rec = await this.create({
+      ...swap,
+      buyerPkh: bid.creatorPkh,
+      buyerEth: bid.creatorEth,
+      token: bid.token,
+      usdcAmount: bid.quoteAmount,
+      nockGift: bid.nockGift,
+    });
+    await this.kv.delete(BID_PREFIX + id);
+    await this.kv.put(BID_FILLED_PREFIX + id, String(rec.hEvm).toLowerCase());
+    return rec;
+  }
+
+  async cancelBid(id: string): Promise<void> {
+    await this.kv.delete(BID_PREFIX + id);
   }
 }
 

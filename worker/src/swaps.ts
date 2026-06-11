@@ -200,8 +200,10 @@ export async function claimSwap(
 }
 
 /**
- * Seller cancels an OPEN swap. Only allowed while nothing exists on-chain:
- * no committed buyer and no NOCK locked. Deletes the record and every index.
+ * Cancel a swap while nothing exists on-chain (no NOCK locked, no quote token
+ * locked). Either participant may cancel — covers the seller delisting an open
+ * (buyer-less) order AND either party backing out of a filled-bid swap the
+ * counterparty never acted on. Deletes the record and every index.
  */
 export async function cancelSwap(
   env: Env,
@@ -210,19 +212,21 @@ export async function cancelSwap(
 ): Promise<void> {
   const prev = await loadSwap(env, hEvm);
   if (!prev) throw new SwapError(404, "swap not found");
-  if (prev.sellerPkh !== sessionPkh) {
-    throw new SwapError(403, "only the seller may cancel a swap");
-  }
-  if (prev.buyerPkh || prev.buyerEth) {
-    throw new SwapError(409, "swap already claimed — it can no longer be cancelled");
+  if (prev.sellerPkh !== sessionPkh && prev.buyerPkh !== sessionPkh) {
+    throw new SwapError(403, "only a participant may cancel a swap");
   }
   if (prev.lockFirstName || prev.nockLockTxId) {
     throw new SwapError(409, "NOCK already locked — refund it instead of cancelling");
   }
+  if (prev.usdcLockTxHash) {
+    throw new SwapError(409, "quote token already locked — refund it instead of cancelling");
+  }
   const key = id(hEvm);
   const keys = [SWAP_PREFIX + key, OPEN_IDX + key];
   if (prev.sellerEth) keys.push(`${ETH_IDX}${String(prev.sellerEth).toLowerCase()}:${key}`);
+  if (prev.buyerEth) keys.push(`${ETH_IDX}${String(prev.buyerEth).toLowerCase()}:${key}`);
   if (prev.sellerPkh) keys.push(`${NOCK_IDX}${prev.sellerPkh}:${key}`);
+  if (prev.buyerPkh) keys.push(`${NOCK_IDX}${prev.buyerPkh}:${key}`);
   await Promise.all(keys.map((k) => env.SWAPS.delete(k)));
 }
 

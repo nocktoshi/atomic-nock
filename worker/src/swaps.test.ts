@@ -193,17 +193,19 @@ describe("marketplace (open swaps)", () => {
     expect([...env.store.keys()].filter((k) => k.includes("0xabc"))).toEqual([]);
   });
 
-  it("only the seller can cancel", async () => {
+  it("only a participant can cancel", async () => {
     const env = fakeEnv();
     await createSwap(env, { ...openSwap }, SELLER);
-    await expect(cancelSwap(env, "0xabc", BUYER)).rejects.toMatchObject({ status: 403 });
+    await expect(cancelSwap(env, "0xabc", "STRANGER")).rejects.toMatchObject({ status: 403 });
   });
 
-  it("cannot cancel once claimed", async () => {
+  it("either participant can cancel a claimed swap while nothing is on-chain", async () => {
     const env = fakeEnv();
     await createSwap(env, { ...openSwap }, SELLER);
     await claimSwap(env, "0xabc", "0xbuyer", BUYER);
-    await expect(cancelSwap(env, "0xabc", SELLER)).rejects.toMatchObject({ status: 409 });
+    await cancelSwap(env, "0xabc", BUYER);
+    expect(env.store.get("swap:0xabc")).toBeUndefined();
+    expect([...env.store.keys()].filter((k) => k.includes("0xabc"))).toEqual([]);
   });
 
   it("cannot cancel after NOCK is locked", async () => {

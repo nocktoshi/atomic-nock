@@ -6,6 +6,7 @@ import { isPlausibleWalletAddress } from "../nock/balance.js";
 import { assertBase58Digest } from "../nock/tx.js";
 import { usdcToAtomic, computeSwapId, withdrawUsdc } from "../evm/htlc.js";
 import { secretStore } from "../app/storage/secret-store.js";
+import type { BidPublic } from "../app/repo/swap-repo.js";
 
 type LockNockFull = LockNockResult & { preview: LockNockPreview };
 import type { Digest } from "@nockbox/iris-sdk/wasm";
@@ -100,6 +101,44 @@ export async function generateSwapAction(
   };
 
   return { swap, preimageJam, refundHeight };
+}
+
+// ---------------------------------------------------------------------------
+// fillBidAction — NOCK holder fills a buy order (becomes the swap's seller)
+// ---------------------------------------------------------------------------
+
+/**
+ * Build the swap that fills a bid. Same generation path as a fresh ask — the
+ * filler holds the secret and locks NOCK first — but every economic field comes
+ * from the bid, and the bid creator is pre-committed as the buyer (including
+ * their Base address, so they skip the claim step and go straight to locking).
+ * Caller persists the preimage + posts via repo.fillBid.
+ */
+export async function fillBidAction(
+  input: {
+    bid: BidPublic;
+    /** Filler's nockblocks wallet address (becomes sellerPkh). */
+    walletAddress: string;
+    /** Filler's Base address (receives the quote token on withdraw). */
+    sellerEth: string;
+    refundHeight: string;
+  },
+  deps?: GenerateSwapDeps
+): Promise<{ swap: SwapPublic; preimageJam: Uint8Array }> {
+  const { swap, preimageJam } = await generateSwapAction(
+    {
+      buyerPkh: input.bid.creatorPkh,
+      walletAddress: input.walletAddress,
+      sellerEth: input.sellerEth,
+      usdcAmount: input.bid.quoteAmount,
+      gift: input.bid.nockGift.toString(),
+      refundHeight: input.refundHeight,
+      token: input.bid.token,
+    },
+    deps
+  );
+  swap.buyerEth = input.bid.creatorEth;
+  return { swap, preimageJam };
 }
 
 // ---------------------------------------------------------------------------

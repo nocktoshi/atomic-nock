@@ -201,6 +201,7 @@ function EvmConnect({
 }
 
 export function WalletBar() {
+  const navigate = useNavigate();
   const { nock, evm, setNock, setEvm } = useSession();
   const [irisName, setIrisName] = useState<string | null>(null);
   const [irisNameFor, setIrisNameFor] = useState<string | undefined>(undefined);
@@ -356,6 +357,13 @@ export function WalletBar() {
         onDisconnect={disconnectEvm}
       />
       <div className="price-banner">{priceText}</div>
+      <button
+        type="button"
+        className="my-swaps-pill"
+        onClick={() => navigate("/dashboard")}
+      >
+        My Swaps
+      </button>
     </>
   );
 }
