@@ -109,34 +109,68 @@ pub fn App() -> impl IntoView {
     }
 }
 
+/// Iris (Nockchain) wallet icon — the radioactive mark (from WalletBar.tsx).
+const IRIS_SVG: &str = r##"<svg width="18" height="18" viewBox="0 0 512 512" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M256.614 200.083C287.496 200.083 312.53 225.118 312.531 256C312.531 286.883 287.497 311.917 256.614 311.917C225.732 311.916 200.698 286.882 200.698 256C200.698 225.118 225.733 200.084 256.614 200.083Z" fill="#7bd332"/><path fill-rule="evenodd" clip-rule="evenodd" d="M332.427 0C374.975.002 409.465 34.494 409.468 77.042V101.896H434.323C476.876 101.896 511.364 136.405 511.364 178.958C511.361 221.475 476.931 255.945 434.427 256C476.931 256.054 511.381 290.525 511.385 333.042C511.385 375.594 476.875 410.104 434.323 410.104H409.468V434.958C409.463 477.506 374.975 511.998 332.427 512C293.204 512 260.817 482.682 255.989 444.771C251.162 482.68 218.793 511.997 179.573 512C137.022 512 102.515 477.507 102.51 434.958V410.104H77.656C35.107 410.1.615 375.591.614 333.042C.618 290.525 35.068 256.054 77.573 256C35.068 255.945.617 221.475.614 178.958C.614 136.408 35.107 101.901 77.656 101.896H102.51V77.042C102.514 34.492 137.022 0 179.573 0C218.789.003 251.157 29.305 255.989 67.208C260.821 29.302 293.208 0 332.427 0ZM304.573 187.083C275.444 167.238 237.138 167.237 208.01 187.083L121.593 245.979C114.356 250.912 114.355 261.588 121.593 266.521L208.01 325.396C237.14 345.245 275.443 345.244 304.573 325.396L390.989 266.521C398.228 261.588 398.228 250.912 390.989 245.979L304.573 187.083Z" fill="#7bd332"/></svg>"##;
+
+/// ETH / Base wallet icon (from WalletBar.tsx).
+const ETH_SVG: &str = r##"<svg version="1.2" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 18 18" width="18" height="18"><style>.s0{fill:#627eea}.s1{opacity:.6;fill:#fff}.s2{fill:#fff}.s3{opacity:.2;fill:#fff}.s4{fill:#00f}</style><g><path fill-rule="evenodd" class="s0" d="m8.25 16.13c-4.35 0-7.88-3.53-7.88-7.88 0-4.35 3.53-7.87 7.88-7.87 4.35 0 7.88 3.52 7.88 7.87 0 4.35-3.53 7.88-7.88 7.88z"/><g><path class="s1" d="m8.5 2.34v4.37l3.69 1.65z"/><path class="s2" d="m8.5 2.34l-3.7 6.02 3.7-1.65z"/><path class="s1" d="m8.5 11.19v2.96l3.69-5.1z"/><path class="s2" d="m8.5 14.15v-2.96l-3.7-2.14z"/><path class="s3" d="m8.5 10.5l3.69-2.14-3.69-1.65z"/><path class="s1" d="m4.8 8.36l3.7 2.14v-3.79z"/></g></g><g style="opacity:.34"><path class="s2" d="m9.11 9.81c0-.24 0-.36.05-.45q.06-.14.2-.2c.09-.05.21-.05.45-.05h7.38c.24 0 .36 0 .45.05q.14.06.2.2c.05.09.05.21.05.45v7.38c0 .24 0 .36-.05.45q-.06.14-.2.2c-.09.05-.21.05-.45.05h-7.38c-.24 0-.36 0-.45-.05q-.14-.06-.2-.2c-.05-.09-.05-.21-.05-.45 0 0 0-7.38 0-7.38z"/></g><g><path class="s4" d="m9.64 10.25c0-.21 0-.32.04-.4q.06-.11.17-.17c.08-.04.19-.04.4-.04h6.5c.21 0 .32 0 .4.04q.11.06.17.17c.04.08.04.19.04.4v6.5c0 .21 0 .32-.04.4q-.06.11-.17.17c-.08.04-.19.04-.4.04h-6.5c-.21 0-.32 0-.4-.04q-.11-.06-.17-.17c-.04-.08-.04-.19-.04-.4 0 0 0-6.5 0-6.5z"/></g></svg>"##;
+
 #[component]
 fn WalletBar() -> impl IntoView {
     let s = session();
-    let connect_evm = move |_| {
-        spawn_local(async move {
-            match swap_evm::provider::connect_wallet().await {
-                Ok(addr) => s.evm.set(Some(addr.to_string())),
+    // Disconnected → connect; connected → disconnect (the original opens a menu
+    // with Disconnect; the dev bridge keeps it a toggle until the real wallet lands).
+    let toggle_nock = move |_| {
+        if s.nock.get().is_some() {
+            s.nock.set(None);
+        } else {
+            match swap_core::hash_public_key(&[0u8; 97]) {
+                Ok(pkh) => s.nock.set(Some(NockSession { pkh, address: None })),
                 Err(e) => s.set_err(e.to_string()),
             }
-        });
+        }
     };
-    let connect_nock = move |_| match swap_core::hash_public_key(&[0u8; 97]) {
-        Ok(pkh) => s.nock.set(Some(NockSession { pkh, address: None })),
-        Err(e) => s.set_err(e.to_string()),
+    let toggle_evm = move |_| {
+        if s.evm.get().is_some() {
+            s.evm.set(None);
+        } else {
+            spawn_local(async move {
+                match swap_evm::provider::connect_wallet().await {
+                    Ok(addr) => s.evm.set(Some(addr.to_string())),
+                    Err(e) => s.set_err(e.to_string()),
+                }
+            });
+        }
+    };
+    let nock_cls = move || {
+        if s.nock.get().is_some() {
+            "wallet-connect-btn connected"
+        } else {
+            "wallet-connect-btn"
+        }
+    };
+    let evm_cls = move || {
+        if s.evm.get().is_some() {
+            "wallet-connect-btn connected"
+        } else {
+            "wallet-connect-btn"
+        }
     };
 
     view! {
-        <button type="button" class="wallet-connect-btn" on:click=connect_nock>
-            <span class="wallet-btn-icon">"☢"</span>
+        <button type="button" class=nock_cls on:click=toggle_nock>
+            <span class="wallet-btn-icon" inner_html=IRIS_SVG></span>
             <span class="wallet-btn-label">
                 {move || s.nock.get().map(|n| short(&n.pkh)).unwrap_or_else(|| "Nockchain".into())}
             </span>
+            {move || s.nock.get().is_some().then(|| view! { <span class="wallet-btn-chevron">"▾"</span> })}
         </button>
-        <button type="button" class="wallet-connect-btn" on:click=connect_evm>
-            <span class="wallet-btn-icon">"◆"</span>
+        <button type="button" class=evm_cls on:click=toggle_evm>
+            <span class="wallet-btn-icon" inner_html=ETH_SVG></span>
             <span class="wallet-btn-label">
                 {move || s.evm.get().map(|a| trunc_addr(&a)).unwrap_or_else(|| "Base".into())}
             </span>
+            {move || s.evm.get().is_some().then(|| view! { <span class="wallet-btn-chevron">"▾"</span> })}
         </button>
         <div class="price-banner">
             {move || match s.price.get() {
