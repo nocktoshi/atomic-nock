@@ -126,13 +126,13 @@ fn WalletBar() -> impl IntoView {
     };
 
     view! {
-        <button type="button" class="wallet-btn" on:click=connect_nock>
+        <button type="button" class="wallet-connect-btn" on:click=connect_nock>
             <span class="wallet-btn-icon">"☢"</span>
             <span class="wallet-btn-label">
                 {move || s.nock.get().map(|n| short(&n.pkh)).unwrap_or_else(|| "Nockchain".into())}
             </span>
         </button>
-        <button type="button" class="wallet-btn" on:click=connect_evm>
+        <button type="button" class="wallet-connect-btn" on:click=connect_evm>
             <span class="wallet-btn-icon">"◆"</span>
             <span class="wallet-btn-label">
                 {move || s.evm.get().map(|a| trunc_addr(&a)).unwrap_or_else(|| "Base".into())}
