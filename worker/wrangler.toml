@@ -4,6 +4,11 @@ compatibility_date = "2024-11-01"
 # node:crypto fallback in @block65/webcrypto-web-push (browser push encryption).
 compatibility_flags = ["nodejs_compat"]
 
+[vars]
+APP_URL = "https://atomicnock.com"
+EMAIL_FROM = "notifications@atomicnock.com"
+TELEGRAM_BOT_NAME = "atomicnockbot"
+
 [[routes]]
 pattern = "api.atomicnock.com"
 zone_name = "atomicnock.com"
