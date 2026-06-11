@@ -1,18 +1,14 @@
 /**
- * Parity export: run the ORIGINAL TS implementation (iris-sdk / rose-wasm) to
- * emit golden vectors for the protocol-critical functions, which the Rust crates
- * assert against. This is the oracle for the migration's correctness — no live
- * Nockchain node needed.
+ * Parity golden vectors: run the ORIGINAL TS implementation (iris-sdk / rose-wasm)
+ * and snapshot protocol-critical outputs. This is the oracle for the migration's
+ * correctness — no live Nockchain node needed.
  *
  * Inputs are derived the SAME way the Rust tests derive them (golden hax jam for
  * hNock; hashPublicKey of all-0x00 / all-0x01 97-byte keys for the pkhs), so both
  * sides start from identical bytes.
- *
- * Run:  npx vitest run src/parity-export.test.ts
  */
-import { describe, it } from "vitest";
-import { writeFileSync, mkdirSync, readFileSync } from "node:fs";
-import { dirname } from "node:path";
+import { describe, it, expect } from "vitest";
+import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { keccak256 } from "viem";
 
@@ -37,9 +33,6 @@ import { htlcLockRootDigest } from "./nock/tx.js";
 import { encodeSwapParams } from "./swap.js";
 import { toAtomic } from "./evm/htlc.js";
 
-const OUT =
-  "/Users/callen/work/third-party/atomic-nock/crates/swap-nock/tests/fixtures/parity.json";
-
 // A real HTLC hax preimage jam (the golden from the rose-rs fix/hax-hash test).
 const GOLDEN_JAM = [
   1, 4, 94, 58, 17, 242, 138, 59, 221, 17, 3, 236, 145, 212, 172, 51, 41, 91, 17, 50, 64, 143, 128,
@@ -49,7 +42,7 @@ const GOLDEN_JAM = [
 ];
 
 describe("parity export", () => {
-  it("emits golden vectors from the original implementation", async () => {
+  it("matches golden vectors from the original implementation", async () => {
     await initRoseWasm();
 
     const jam = Uint8Array.from(GOLDEN_JAM);
@@ -80,7 +73,7 @@ describe("parity export", () => {
       nockLockTxId: "0xnl",
     };
 
-    const out = {
+    expect({
       hashPreimage: { jam: GOLDEN_JAM, digest: hNock },
       hashPublicKey: { zero97: buyerPkh, one97: sellerPkh },
       htlcLockRoot: { hNock, buyerPkh, sellerPkh, refundHeight, lockRoot },
@@ -92,11 +85,6 @@ describe("parity export", () => {
         { amount: "1.0", decimals: 18, result: toAtomic("1.0", 18).toString() },
       ],
       encodeSwapParams: { json: encodeSwapParams(swap as never) },
-    };
-
-    mkdirSync(dirname(OUT), { recursive: true });
-    writeFileSync(OUT, JSON.stringify(out, null, 2) + "\n");
-    // eslint-disable-next-line no-console
-    console.log("wrote parity fixture to", OUT);
+    }).toMatchSnapshot();
   });
 });
