@@ -1,0 +1,25 @@
+[package]
+name = "swap-evm"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+# Base / EVM HTLC layer. Pure core (ABIs, amount math, calldata/return codecs)
+# builds + tests on native and wasm32; the EIP-1193 browser bridge + high-level
+# ops are wasm-only (see src/provider.rs).
+
+[dependencies]
+# alloy-core pure crates only — NO alloy-provider (its reqwest/hyper transport
+# won't build for wasm32). We hand-encode calldata and ship it over EIP-1193.
+alloy-primitives = "1"
+alloy-sol-types = "1"
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+wasm-bindgen = "0.2"
+wasm-bindgen-futures = "0.4"
+js-sys = "0.3"
+web-sys = { version = "0.3", features = ["Window"] }
+gloo-timers = { version = "0.3", features = ["futures"] }
+
+[dev-dependencies]
+hex = "0.4"
