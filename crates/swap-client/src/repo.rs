@@ -48,6 +48,21 @@ impl<A: SwapApi> SwapRepository<A> {
         self.api.advance(&swap.h_evm, &fields).await.map(|_| ())
     }
 
+    /// List all open orders (dev marketplace view). Backed by the `swap:` key
+    /// prefix on the in-memory store; the deployed worker exposes a scoped index
+    /// instead, so this is the dev/`MemorySwapApi` path.
+    pub async fn list_open(&self) -> ApiResult<Vec<Swap>> {
+        let keys = self.api.list_keys("swap:").await?;
+        let mut out = Vec::new();
+        for k in keys {
+            let id = k.strip_prefix("swap:").unwrap_or(&k);
+            if let Some(swap) = self.get(id).await? {
+                out.push(swap);
+            }
+        }
+        Ok(out)
+    }
+
     pub async fn list_for_nock_pkh(&self, pkh: &str) -> ApiResult<Vec<Swap>> {
         let prefix = format!("{NOCK_IDX}{pkh}:");
         let keys = self.api.list_keys(&prefix).await?;

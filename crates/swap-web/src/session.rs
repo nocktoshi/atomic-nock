@@ -47,6 +47,8 @@ pub struct SessionCtx {
     pub nock: RwSignal<Option<NockSession>>,
     pub evm: RwSignal<Option<String>>,
     pub log: RwSignal<LogState>,
+    /// Latest NOCK/USD market price (shared by the price banner + swap hint).
+    pub price: RwSignal<Option<f64>>,
 }
 
 impl SessionCtx {
@@ -79,6 +81,7 @@ pub fn provide_session(initial_log: &str) {
             msg: initial_log.to_string(),
             cls: LogCls::None,
         }),
+        price: RwSignal::new(None),
     });
     let repo: Arc<DevRepo> = Arc::new(SwapRepository::new(MemorySwapApi::new(MemoryKv::new())));
     provide_context(repo);
