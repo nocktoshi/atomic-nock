@@ -255,7 +255,7 @@ export function SolverTrade() {
             rate ≈ ${rfq.pricePerNock.toFixed(4)}/NOCK
             {maxHint}
           </span>
-        ) : rfq?.status === "rejected" ? (
+        ) : rfq?.status === "rejected" || rfq?.status === "expired" ? (
           <span className="addr-resolve-hint swap-warn">{rfq.reason ?? "quote unavailable"}</span>
         ) : null}
         {overMax && overMaxHint && (

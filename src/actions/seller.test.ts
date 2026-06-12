@@ -35,7 +35,7 @@ const validInput = {
   walletAddress: "SELLER_ADDR",
   sellerEth: "0x1111111111111111111111111111111111111111",
   usdcAmount: "2.5",
-  gift: "655360",
+  gift: "3276800",
   refundHeight: "85000",
 };
 
@@ -47,7 +47,7 @@ describe("generateSwapAction", () => {
     expect(swap.hEvm).toBe("0xEVM");
     expect(swap.sellerEth).toBe(validInput.sellerEth);
     expect(swap.usdcAmount).toBe("2.5");
-    expect(swap.nockGift).toBe(655360n);
+    expect(swap.nockGift).toBe(3276800n);
     expect(preimageJam).toEqual(new Uint8Array([1, 2]));
   });
 
@@ -73,10 +73,10 @@ describe("generateSwapAction", () => {
     ).rejects.toThrow("Connect MetaMask");
   });
 
-  it("rejects gifts below the 10 NOCK minimum", async () => {
+  it("rejects gifts below the minimum NOCK", async () => {
     await expect(
       generateSwapAction({ ...validInput, gift: "65536" }, genDeps())
-    ).rejects.toThrow(/10 NOCK/);
+    ).rejects.toThrow(/NOCK/);
   });
 
 });

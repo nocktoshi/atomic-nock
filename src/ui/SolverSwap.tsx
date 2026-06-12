@@ -595,7 +595,7 @@ export function SolverSwap() {
             rate ≈ ${rfq.pricePerNock.toFixed(4)}/NOCK
             {maxUsd != null && <> · max ${maxUsd.toFixed(2)} per swap</>}
           </span>
-        ) : rfq?.status === "rejected" ? (
+        ) : rfq?.status === "rejected" || rfq?.status === "expired" ? (
           <span className="addr-resolve-hint swap-warn">{rfq.reason ?? "quote unavailable"}</span>
         ) : null}
         {overMax && (

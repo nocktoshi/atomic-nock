@@ -16,7 +16,9 @@ const KV_MIN_TTL_SEC = 60;
  *  POLL_MS + worst-case tick duration (oracle, inventory, in-flight swaps) —
  *  e.g. POLL_MS=20s needs this well above 20s. Capped just under KV TTL. */
 export const HEARTBEAT_MAX_AGE_MS = (KV_MIN_TTL_SEC - 5) * 1000;
-const RFQ_LOGIC_TTL_SEC = 30;
+/** Logical expiry — must exceed solver POLL_MS + worst-case tick duration so a
+ *  sized request isn't gone before the bot's next pass. KV record TTL stays 60s. */
+const RFQ_LOGIC_TTL_SEC = 55;
 
 interface RfqRecord {
   id: string;
