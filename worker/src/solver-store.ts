@@ -7,6 +7,7 @@ import type { PnlEntry, TrackedSwap, TrackedSwapPatch } from "../../src/solver-s
 import { SwapError, type Env } from "./swaps.js";
 
 const SWAP_PREFIX = "solver:swap:";
+const SWAP_IDX_PREFIX = "solver:swap-idx:";
 const PNL_PREFIX = "solver:pnl:";
 
 const id = (hEvm: string) => hEvm.toLowerCase();
@@ -15,8 +16,66 @@ function swapKey(pkh: string, hEvm: string): string {
   return `${SWAP_PREFIX}${pkh}:${id(hEvm)}`;
 }
 
+function swapIndexKey(pkh: string): string {
+  return `${SWAP_IDX_PREFIX}${pkh}`;
+}
+
 function pnlKey(pkh: string): string {
   return `${PNL_PREFIX}${pkh}`;
+}
+
+function parseSwapIndex(raw: string): string[] {
+  const parsed = JSON.parse(raw) as unknown;
+  if (!Array.isArray(parsed)) return [];
+  return [...new Set(parsed.filter((h): h is string => typeof h === "string").map(id))];
+}
+
+async function readSwapIndex(env: Env, pkh: string): Promise<string[]> {
+  const raw = await env.SWAPS.get(swapIndexKey(pkh));
+  if (!raw) return [];
+  try {
+    return parseSwapIndex(raw);
+  } catch {
+    return [];
+  }
+}
+
+async function writeSwapIndex(env: Env, pkh: string, ids: string[]): Promise<void> {
+  await env.SWAPS.put(swapIndexKey(pkh), JSON.stringify([...new Set(ids.map(id))]));
+}
+
+async function appendSwapIndex(env: Env, pkh: string, hEvm: string): Promise<void> {
+  const ids = await readSwapIndex(env, pkh);
+  const next = id(hEvm);
+  if (ids.includes(next)) return;
+  await writeSwapIndex(env, pkh, [...ids, next]);
+}
+
+/** One-time backfill when the index key is missing (KV list() is daily-capped). */
+async function backfillSwapIndex(env: Env, pkh: string): Promise<string[]> {
+  try {
+    const prefix = `${SWAP_PREFIX}${pkh}:`;
+    const page = await env.SWAPS.list({ prefix, limit: 1000 });
+    const ids = page.keys.map((k) => k.name.slice(prefix.length)).filter(Boolean);
+    if (ids.length > 0) await writeSwapIndex(env, pkh, ids);
+    return ids;
+  } catch {
+    return [];
+  }
+}
+
+async function loadSwapsByIds(env: Env, pkh: string, ids: string[]): Promise<TrackedSwap[]> {
+  const swaps: TrackedSwap[] = [];
+  for (const h of ids) {
+    const raw = await env.SWAPS.get(swapKey(pkh, h));
+    if (!raw) continue;
+    try {
+      swaps.push(JSON.parse(raw) as TrackedSwap);
+    } catch {
+      // Skip corrupt entries rather than failing the whole route.
+    }
+  }
+  return swaps;
 }
 
 export function openExposureUsd(swaps: TrackedSwap[]): number {
@@ -24,12 +83,9 @@ export function openExposureUsd(swaps: TrackedSwap[]): number {
 }
 
 export async function listTrackedSwaps(env: Env, pkh: string): Promise<TrackedSwap[]> {
-  const prefix = `${SWAP_PREFIX}${pkh}:`;
-  const page = await env.SWAPS.list({ prefix });
-  const raw = await Promise.all(page.keys.map((k) => env.SWAPS.get(k.name)));
-  return raw
-    .filter((r): r is string => r != null)
-    .map((r) => JSON.parse(r) as TrackedSwap);
+  let ids = await readSwapIndex(env, pkh);
+  if (ids.length === 0) ids = await backfillSwapIndex(env, pkh);
+  return loadSwapsByIds(env, pkh, ids);
 }
 
 export async function loadTrackedSwap(
@@ -49,6 +105,7 @@ export async function upsertTrackedSwap(
   if (!swap.hEvm) throw new SwapError(400, "missing hEvm");
   const next: TrackedSwap = { ...swap, updatedAt: Date.now() };
   await env.SWAPS.put(swapKey(pkh, next.hEvm), JSON.stringify(next));
+  await appendSwapIndex(env, pkh, next.hEvm);
   return next;
 }
 

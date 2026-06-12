@@ -61,6 +61,27 @@ describe("solver-store", () => {
     expect(swaps.map((s) => s.hEvm.toLowerCase()).sort()).toEqual(["0xabc", "0xdef"]);
   });
 
+  it("lists swaps via index without KV list()", async () => {
+    const env = fakeEnv();
+    env.SWAPS.list = async () => {
+      throw new Error("KV list() limit exceeded for the day.");
+    };
+    await upsertTrackedSwap(env, PKH, base);
+    await upsertTrackedSwap(env, PKH, { ...base, hEvm: "0xdef" });
+    const swaps = await listTrackedSwaps(env, PKH);
+    expect(swaps.map((s) => s.hEvm.toLowerCase()).sort()).toEqual(["0xabc", "0xdef"]);
+  });
+
+  it("skips corrupt swap records", async () => {
+    const env = fakeEnv();
+    await env.SWAPS.put(`solver:swap-idx:${PKH}`, JSON.stringify(["0xabc", "0xbad"]));
+    await env.SWAPS.put(`solver:swap:${PKH}:0xabc`, JSON.stringify(base));
+    await env.SWAPS.put(`solver:swap:${PKH}:0xbad`, "not-json");
+    const swaps = await listTrackedSwaps(env, PKH);
+    expect(swaps).toHaveLength(1);
+    expect(swaps[0]?.hEvm.toLowerCase()).toBe("0xabc");
+  });
+
   it("patches whitelisted fields", async () => {
     const env = fakeEnv();
     await upsertTrackedSwap(env, PKH, base);
