@@ -418,9 +418,8 @@ export function SolverSell() {
 
         {stage !== "done" && stage !== "ready-to-lock" && stage !== "ready-to-withdraw" && (
           <p className="trustless-note">
-            The waits are Nockchain block confirmations — the price of a trustless swap. Your NOCK
-            stays protected by an on-chain refund the whole time; it's safe to close this page (the
-            URL resumes it).
+            The waits are Nockchain block confirmations. Your NOCK
+            stays protected by an on-chain refund the whole time. 🔐
           </p>
         )}
 

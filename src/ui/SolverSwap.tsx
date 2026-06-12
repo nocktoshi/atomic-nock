@@ -508,9 +508,8 @@ export function SolverSwap() {
 
         {stage !== "done" && stage !== "ready-to-lock" && stage !== "ready-to-claim" && (
           <p className="trustless-note">
-            The waits are Nockchain block confirmations — the price of a trustless swap. Your funds
-            stay protected by on-chain refunds the whole time; it's safe to close this page (the URL
-            resumes it).
+            The waits are Nockchain block confirmations. Your funds
+            stay protected by on-chain refunds the whole time. 🔐
           </p>
         )}
 
