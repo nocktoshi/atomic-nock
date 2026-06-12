@@ -4,35 +4,15 @@ import {
   claimSwap,
   advanceSwap,
   cancelSwap,
-  listOpenSwaps,
-  type Env,
 } from "./swaps.js";
 import { enforceRate } from "./ratelimit.js";
+import { marketEnv, type MarketEnv } from "./testing.js";
 
-/** In-memory KV mock for the Worker's Env; records the options of every put. */
-function fakeEnv(): Env & { putOpts: Map<string, unknown>; store: Map<string, string> } {
-  const store = new Map<string, string>();
-  const putOpts = new Map<string, unknown>();
-  const SWAPS = {
-    get: async (k: string) => store.get(k) ?? null,
-    put: async (k: string, v: string, opts?: unknown) => {
-      store.set(k, v);
-      putOpts.set(k, opts);
-    },
-    delete: async (k: string) => void store.delete(k),
-    list: async ({ prefix = "", limit = 1000 }: { prefix?: string; limit?: number } = {}) => {
-      const keys = [...store.keys()]
-        .filter((k) => k.startsWith(prefix))
-        .sort()
-        .slice(0, limit)
-        .map((name) => ({ name }));
-      return { keys, list_complete: true, cursor: "" };
-    },
-  };
-  return { SWAPS, putOpts, store } as unknown as Env & {
-    putOpts: Map<string, unknown>;
-    store: Map<string, string>;
-  };
+/** All swap state lives in the Market DO; tests route through a real instance. */
+const fakeEnv = (): MarketEnv => marketEnv();
+
+async function listOpenSwaps(env: MarketEnv) {
+  return { swaps: await env.market.listOpenSwaps() };
 }
 
 const SELLER = "SELLER_PKH";
@@ -127,7 +107,7 @@ describe("multi-asset token field", () => {
   });
 });
 
-describe("KV housekeeping", () => {
+describe("record housekeeping", () => {
   it("stamps server-side createdAt at create", async () => {
     const env = fakeEnv();
     const before = Math.floor(Date.now() / 1000);
@@ -143,13 +123,16 @@ describe("KV housekeeping", () => {
     ).rejects.toThrow(/immutable/);
   });
 
-  it("writes the record and every index with a TTL", async () => {
+  it("indexes both participants under mine: keys (replaces KV idx:nock)", async () => {
     const env = await seedClaimed();
-    expect(env.putOpts.size).toBeGreaterThan(0);
-    for (const [key, opts] of env.putOpts) {
-      const ttl = (opts as { expirationTtl?: number } | undefined)?.expirationTtl;
-      expect(ttl, `missing TTL on put of ${key}`).toBe(30 * 24 * 3600);
-    }
+    expect(env.raw.has("mine:SELLER_PKH:0xabc")).toBe(true);
+    expect(env.raw.has("mine:BUYER_PKH:0xabc")).toBe(true);
+  });
+
+  it("stamps updatedAt on every write (drives the 30-day sweep)", async () => {
+    const env = await seedClaimed();
+    const rec = env.raw.get("swap:0xabc") as { updatedAt?: number };
+    expect(typeof rec.updatedAt).toBe("number");
   });
 });
 
@@ -189,8 +172,8 @@ describe("marketplace (open swaps)", () => {
     await cancelSwap(env, "0xabc", SELLER);
     const { swaps } = await listOpenSwaps(env);
     expect(swaps).toEqual([]);
-    expect(env.store.get("swap:0xabc")).toBeUndefined();
-    expect([...env.store.keys()].filter((k) => k.includes("0xabc"))).toEqual([]);
+    expect(env.raw.get("swap:0xabc")).toBeUndefined();
+    expect([...env.raw.keys()].filter((k) => k.includes("0xabc"))).toEqual([]);
   });
 
   it("only a participant can cancel", async () => {
@@ -204,8 +187,8 @@ describe("marketplace (open swaps)", () => {
     await createSwap(env, { ...openSwap }, SELLER);
     await claimSwap(env, "0xabc", "0xbuyer", BUYER);
     await cancelSwap(env, "0xabc", BUYER);
-    expect(env.store.get("swap:0xabc")).toBeUndefined();
-    expect([...env.store.keys()].filter((k) => k.includes("0xabc"))).toEqual([]);
+    expect(env.raw.get("swap:0xabc")).toBeUndefined();
+    expect([...env.raw.keys()].filter((k) => k.includes("0xabc"))).toEqual([]);
   });
 
   it("cannot cancel after NOCK is locked", async () => {
@@ -220,9 +203,9 @@ describe("marketplace (open swaps)", () => {
     const env = fakeEnv();
     await createSwap(env, { ...openSwap, hEvm: "0xold" }, SELLER);
     // Force distinct createdAt stamps.
-    const oldRec = JSON.parse(env.store.get("swap:0xold")!);
+    const oldRec = env.raw.get("swap:0xold") as { createdAt: number };
     oldRec.createdAt -= 100;
-    env.store.set("swap:0xold", JSON.stringify(oldRec));
+    env.raw.set("swap:0xold", oldRec);
     await createSwap(env, { ...openSwap, hEvm: "0xnew" }, SELLER);
     const { swaps } = await listOpenSwaps(env);
     expect(swaps.map((s) => s.hEvm)).toEqual(["0xnew", "0xold"]);

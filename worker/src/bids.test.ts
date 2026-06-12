@@ -1,25 +1,12 @@
 import { describe, it, expect } from "vitest";
-import { createBid, listBids, cancelBid, fillBid, loadBid, lookupBid } from "./bids.js";
-import { cancelSwap, loadSwap, type Env } from "./swaps.js";
+import { createBid, cancelBid, fillBid, lookupBid } from "./bids.js";
+import { cancelSwap, loadSwap } from "./swaps.js";
+import { marketEnv, type MarketEnv } from "./testing.js";
 
-/** In-memory KV mock (same shape as swaps.test.ts). */
-function fakeEnv(): Env & { store: Map<string, string> } {
-  const store = new Map<string, string>();
-  const SWAPS = {
-    get: async (k: string) => store.get(k) ?? null,
-    put: async (k: string, v: string) => void store.set(k, v),
-    delete: async (k: string) => void store.delete(k),
-    list: async ({ prefix = "", limit = 1000 }: { prefix?: string; limit?: number } = {}) => {
-      const keys = [...store.keys()]
-        .filter((k) => k.startsWith(prefix))
-        .sort()
-        .slice(0, limit)
-        .map((name) => ({ name }));
-      return { keys, list_complete: true, cursor: "" };
-    },
-  };
-  return { SWAPS, store } as unknown as Env & { store: Map<string, string> };
-}
+/** All bid state lives in the Market DO; tests route through a real instance. */
+const fakeEnv = (): MarketEnv => marketEnv();
+const loadBid = (env: MarketEnv, id: string) => env.market.loadBid(id);
+const listBids = (env: MarketEnv) => env.market.listBids();
 
 const BIDDER = "BIDDER_PKH";
 const FILLER = "FILLER_PKH";
@@ -70,9 +57,9 @@ describe("listBids", () => {
     const a = await createBid(env, { ...goodBid }, BIDDER);
     const b = await createBid(env, { ...goodBid, quoteAmount: "50" }, BIDDER);
     // Force distinct createdAt ordering.
-    const recB = JSON.parse(env.store.get(`bid:${b.id}`)!);
+    const recB = env.raw.get(`bid:${b.id}`) as { createdAt: number };
     recB.createdAt += 10;
-    env.store.set(`bid:${b.id}`, JSON.stringify(recB));
+    env.raw.set(`bid:${b.id}`, recB);
 
     const bids = await listBids(env);
     expect(bids.map((x) => x.id)).toEqual([b.id, a.id]);
@@ -112,10 +99,10 @@ describe("fillBid", () => {
     // The tombstone routes the creator's bid page to the swap that replaced it.
     expect(await lookupBid(env, bid.id)).toEqual({ filledHEvm: "0xfeed" });
     // No open-marketplace index: the swap is born with a committed buyer.
-    expect(env.store.has(`idx:open:${String(swap.hEvm).toLowerCase()}`)).toBe(false);
+    expect(env.raw.has(`open:${String(swap.hEvm).toLowerCase()}`)).toBe(false);
     // Both participants are indexed.
-    expect(env.store.has(`idx:nock:${FILLER}:0xfeed`)).toBe(true);
-    expect(env.store.has(`idx:nock:${BIDDER}:0xfeed`)).toBe(true);
+    expect(env.raw.has(`mine:${FILLER}:0xfeed`)).toBe(true);
+    expect(env.raw.has(`mine:${BIDDER}:0xfeed`)).toBe(true);
   });
 
   it("rejects filling your own bid and missing bids", async () => {
@@ -143,7 +130,7 @@ describe("cancelSwap on a filled-bid swap", () => {
     await expect(cancelSwap(env, "0xfeed", "STRANGER")).rejects.toThrow(/participant/);
     await cancelSwap(env, "0xfeed", BIDDER); // buyer backs out pre-lock
     expect(await loadSwap(env, "0xfeed")).toBeNull();
-    expect(env.store.has(`idx:nock:${FILLER}:0xfeed`)).toBe(false);
-    expect(env.store.has(`idx:nock:${BIDDER}:0xfeed`)).toBe(false);
+    expect(env.raw.has(`mine:${FILLER}:0xfeed`)).toBe(false);
+    expect(env.raw.has(`mine:${BIDDER}:0xfeed`)).toBe(false);
   });
 });

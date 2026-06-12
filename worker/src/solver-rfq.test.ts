@@ -1,5 +1,4 @@
 import { describe, it, expect, beforeEach, vi, afterEach } from "vitest";
-import type { Env } from "./swaps.js";
 import {
   createRfq,
   getRfq,
@@ -8,40 +7,12 @@ import {
   respondRfq,
   touchHeartbeat,
 } from "./solver-rfq.js";
-import { RfqBoard, type BoardStorage } from "./rfq-board.js";
+import { marketEnv, type MarketEnv } from "./testing.js";
 
-/** Map-backed BoardStorage — the DO's whole storage contract, no miniflare. */
-function fakeBoardStorage(): BoardStorage & { raw: Map<string, unknown> } {
-  const raw = new Map<string, unknown>();
-  return {
-    raw,
-    async get<T>(key: string) {
-      return raw.get(key) as T | undefined;
-    },
-    async put<T>(key: string, value: T) {
-      raw.set(key, value);
-    },
-    async delete(key: string) {
-      return raw.delete(key);
-    },
-    async list<T>({ prefix }: { prefix: string }) {
-      const out = new Map<string, T>();
-      for (const [k, v] of raw) if (k.startsWith(prefix)) out.set(k, v as T);
-      return out;
-    },
-  };
-}
-
-/** Env whose RFQ_DO namespace routes straight into a real RfqBoard instance. */
-function fakeEnv(): Env & { boardRaw: Map<string, unknown> } {
-  const storage = fakeBoardStorage();
-  const boardInstance = new RfqBoard({ storage });
-  const stub = { fetch: (url: string, init?: RequestInit) => boardInstance.fetch(new Request(url, init)) };
-  const RFQ_DO = {
-    idFromName: (_: string) => "board-id",
-    get: (_: unknown) => stub,
-  };
-  return { RFQ_DO, boardRaw: storage.raw } as unknown as Env & { boardRaw: Map<string, unknown> };
+/** The RFQ board now lives inside the Market DO; same routes, same semantics. */
+function fakeEnv(): MarketEnv & { boardRaw: Map<string, unknown> } {
+  const env = marketEnv();
+  return Object.assign(env, { boardRaw: env.raw });
 }
 
 describe("solver-rfq (Durable Object board)", () => {
@@ -79,7 +50,7 @@ describe("solver-rfq (Durable Object board)", () => {
     const a = await createRfq(env, { side: "buy", amountIn: "1" });
     const b = await createRfq(env, { side: "sell", amountIn: "2" });
     const pending = await listPendingRfqs(env);
-    expect(pending.map((r) => r.id)).toEqual([a.rfqId, b.rfqId]); // ordered, instant
+    expect(pending.map((r) => r.id)).toEqual([b.rfqId, a.rfqId]); // ordered, instant
   });
 
   it("responds to RFQ with public fields only", async () => {

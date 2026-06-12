@@ -10,22 +10,18 @@
  * SwapError, so routes and tests are unchanged.
  */
 import { SwapError, type Env } from "./swaps.js";
-import type { RfqSide, SolverRfqResponse } from "../../src/market/solver-rfq.js";
-import type { BoardRfqRecord } from "./rfq-board.js";
+import type { SolverRfqResponse } from "../../src/market/solver-rfq.js";
+import type { BoardRfqRecord } from "./market.js";
+import { marketStub } from "./market-client.js";
 
-export { HEARTBEAT_MAX_AGE_MS } from "./rfq-board.js";
+export { HEARTBEAT_MAX_AGE_MS } from "./market.js";
 
 function isPositiveDecimal(v: unknown): v is string {
   return typeof v === "string" && /^\d{1,12}(\.\d{1,18})?$/.test(v) && parseFloat(v) > 0;
 }
 
-function board(env: Env): DurableObjectStub {
-  if (!env.RFQ_DO) throw new SwapError(500, "RFQ board not configured");
-  return env.RFQ_DO.get(env.RFQ_DO.idFromName("board"));
-}
-
 async function call<T>(env: Env, path: string, init?: RequestInit): Promise<{ status: number; body: T }> {
-  const res = await board(env).fetch(`https://rfq-board${path}`, init);
+  const res = await marketStub(env).fetch(`https://market${path}`, init);
   return { status: res.status, body: (await res.json()) as T };
 }
 
@@ -81,7 +77,7 @@ export async function getRfq(env: Env, id: string): Promise<SolverRfqResponse | 
 export async function listPendingRfqs(env: Env): Promise<BoardRfqRecord[]> {
   const { status, body } = await call<{ rfqs?: BoardRfqRecord[]; error?: string }>(env, "/pending");
   if (status !== 200) throw new SwapError(500, body.error ?? "rfq list failed");
-  return body.rfqs ?? [];
+  return body.rfqs?.sort((a,b)=>a.createdAt-b.createdAt) ?? [];
 }
 
 export async function respondRfq(

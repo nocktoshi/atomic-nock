@@ -1,5 +1,4 @@
 import { describe, it, expect } from "vitest";
-import type { Env } from "./swaps.js";
 import {
   appendPnl,
   listPnl,
@@ -12,24 +11,10 @@ import {
   upsertTrackedSwap,
 } from "./solver-store.js";
 import type { TrackedSwap } from "../../src/solver-state.js";
+import { marketEnv, type MarketEnv } from "./testing.js";
 
-function fakeEnv(): Env & { store: Map<string, string> } {
-  const store = new Map<string, string>();
-  const SWAPS = {
-    get: async (k: string) => store.get(k) ?? null,
-    put: async (k: string, v: string) => void store.set(k, v),
-    delete: async (k: string) => void store.delete(k),
-    list: async ({ prefix = "", limit = 1000 }: { prefix?: string; limit?: number } = {}) => {
-      const keys = [...store.keys()]
-        .filter((k) => k.startsWith(prefix))
-        .sort()
-        .slice(0, limit)
-        .map((name) => ({ name }));
-      return { keys, list_complete: true, cursor: "" };
-    },
-  };
-  return { SWAPS, store } as unknown as Env & { store: Map<string, string> };
-}
+/** Solver state lives in the Market DO; tests route through a real instance. */
+const fakeEnv = (): MarketEnv => marketEnv();
 
 const PKH = "SOLVER_PKH";
 const base: TrackedSwap = {
@@ -61,25 +46,12 @@ describe("solver-store", () => {
     expect(swaps.map((s) => s.hEvm.toLowerCase()).sort()).toEqual(["0xabc", "0xdef"]);
   });
 
-  it("lists swaps via index without KV list()", async () => {
+  it("an upsert without the secret never drops a persisted one", async () => {
     const env = fakeEnv();
-    env.SWAPS.list = async () => {
-      throw new Error("KV list() limit exceeded for the day.");
-    };
     await upsertTrackedSwap(env, PKH, base);
-    await upsertTrackedSwap(env, PKH, { ...base, hEvm: "0xdef" });
-    const swaps = await listTrackedSwaps(env, PKH);
-    expect(swaps.map((s) => s.hEvm.toLowerCase()).sort()).toEqual(["0xabc", "0xdef"]);
-  });
-
-  it("skips corrupt swap records", async () => {
-    const env = fakeEnv();
-    await env.SWAPS.put(`solver:swap-idx:${PKH}`, JSON.stringify(["0xabc", "0xbad"]));
-    await env.SWAPS.put(`solver:swap:${PKH}:0xabc`, JSON.stringify(base));
-    await env.SWAPS.put(`solver:swap:${PKH}:0xbad`, "not-json");
-    const swaps = await listTrackedSwaps(env, PKH);
-    expect(swaps).toHaveLength(1);
-    expect(swaps[0]?.hEvm.toLowerCase()).toBe("0xabc");
+    await putSwapSecret(env, PKH, "0xabc", "aabbcc");
+    const after = await upsertTrackedSwap(env, PKH, { ...base, phase: "locked-nock" });
+    expect(after.secretHex).toBe("aabbcc");
   });
 
   it("patches whitelisted fields", async () => {

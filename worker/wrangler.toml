@@ -48,12 +48,16 @@ namespace_id = "1004"
 simple = { limit = 600, period = 60 }
 
 [[durable_objects.bindings]]
-name = "RFQ_DO"
-class_name = "RfqBoard"
+name = "MARKET_DO"
+class_name = "Market"
 
 [[migrations]]
 tag = "v1"
 new_sqlite_classes = ["RfqBoard"]
+[[migrations]]
+tag = "v2"
+new_sqlite_classes = ["Market"]
+deleted_classes = ["RfqBoard"]
 
 # Bundle the rose-wasm verifier as a CompiledWasm module (server-side signature
 # verification). NOTE: the wasm is ~1MB gzipped — requires the Workers *Paid*

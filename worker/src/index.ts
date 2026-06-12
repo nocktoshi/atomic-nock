@@ -51,11 +51,12 @@ import {
   advanceSwap,
   cancelSwap,
   loadSwap,
+  listMySwapIds,
   SwapError,
   type Env,
 } from "./swaps.js";
 import { createBid, cancelBid, fillBid, lookupBid } from "./bids.js";
-import { getMarketFeed, invalidateMarketFeed } from "./feed.js";
+import { getMarketFeed } from "./feed.js";
 import { oneClickQuote, oneClickGet, oneClickPost } from "./oneclick.js";
 import {
   createRfq,
@@ -108,7 +109,7 @@ import type {
 } from "./contract.js";
 
 // Durable Object class must be exported from the worker entry module.
-export { RfqBoard } from "./rfq-board.js";
+export { Market } from "./market.js";
 
 const CORS: Record<string, string> = {
   "access-control-allow-origin": "*",
@@ -214,7 +215,6 @@ export default {
         await enforceRate(env.RL_WRITE, pkh);
         const body = (await req.json()) as CreateBody;
         const rec = await createSwap(env, body.swap, pkh);
-        ctx.waitUntil(invalidateMarketFeed(env));
         return json({ ok: true, swap: rec });
       }
 
@@ -226,7 +226,7 @@ export default {
         const hEvm = decodeURIComponent(claimMatch[1]);
         const prev = await loadSwap(env, hEvm); // snapshot for transition diff
         const rec = await claimSwap(env, hEvm, body.buyerEth, pkh);
-        ctx.waitUntil(Promise.all([invalidateMarketFeed(env), dispatch(env, rec, swapEvents(prev, rec))]));
+        ctx.waitUntil(dispatch(env, rec, swapEvents(prev, rec)));
         return json({ ok: true, swap: rec });
       }
 
@@ -235,7 +235,6 @@ export default {
         const pkh = await requireSession(req, env);
         await enforceRate(env.RL_WRITE, pkh);
         await cancelSwap(env, decodeURIComponent(cancelMatch[1]), pkh);
-        ctx.waitUntil(invalidateMarketFeed(env));
         return json({ ok: true });
       }
 
@@ -244,7 +243,6 @@ export default {
         await enforceRate(env.RL_WRITE, pkh);
         const body = (await req.json()) as { bid?: Record<string, unknown> };
         const rec = await createBid(env, body.bid ?? {}, pkh);
-        ctx.waitUntil(invalidateMarketFeed(env));
         return json({ ok: true, bid: rec });
       }
 
@@ -261,16 +259,13 @@ export default {
         );
         // The bid creator (now the swap's buyer) waits for the filler's NOCK lock.
         ctx.waitUntil(
-          Promise.all([
-            invalidateMarketFeed(env),
-            dispatch(env, swap, [
+          dispatch(env, swap, [
               {
                 recipientPkh: bid.creatorPkh,
                 title: "Buy order filled",
                 body: "Someone is selling you NOCK — they lock NOCK first, then you'll be prompted to lock your side on Base.",
                 url: "",
               },
-            ]),
           ])
         );
         return json({ ok: true, swap });
@@ -281,7 +276,6 @@ export default {
         const pkh = await requireSession(req, env);
         await enforceRate(env.RL_WRITE, pkh);
         await cancelBid(env, decodeURIComponent(bidCancelMatch[1]), pkh);
-        ctx.waitUntil(invalidateMarketFeed(env));
         return json({ ok: true });
       }
 
@@ -594,16 +588,15 @@ export default {
         if (prefix !== `idx:nock:${pkh}:`) {
           return json({ error: "may only list your own swaps" }, 403);
         }
-        // Cursor-paginated straight from KV; the client follows `cursor` until
-        // `complete` (capped client-side) instead of one server-side mega-loop.
-        const limitRaw = Number(url.searchParams.get("limit") ?? "100");
-        const limit = Math.min(Math.max(Math.floor(limitRaw) || 100, 1), 100);
-        const cursor = url.searchParams.get("cursor") ?? undefined;
-        const page = await env.SWAPS.list({ prefix, cursor, limit });
+        // Served by the Market DO's participant index. Keys are synthesized in
+        // the legacy idx:nock:<pkh>:<hEvm> shape so existing clients (solver
+        // reconciliation, dashboard) parse them unchanged; the data is small
+        // enough that pagination is always complete in one page.
+        const ids = await listMySwapIds(env, pkh);
         return json({
-          keys: page.keys.map((k) => k.name),
-          cursor: page.list_complete ? undefined : page.cursor,
-          complete: page.list_complete,
+          keys: ids.map((hEvm) => `idx:nock:${pkh}:${hEvm}`),
+          cursor: undefined,
+          complete: true,
         });
       }
       return json({ error: "not found" }, 404);
