@@ -3,7 +3,7 @@
  * posts a bid (USDC → NOCK); sell posts an open ask (NOCK → USDC). Active
  * in-progress flows resume on /order/:id (buy) or /sell/:id (sell).
  */
-import { useEffect, useMemo, useState, useSyncExternalStore } from "react";
+import { useMemo, useState, useSyncExternalStore } from "react";
 import { useNavigate } from "react-router-dom";
 import { useSession } from "./session.js";
 import { useLog, LogBox } from "./log.js";
@@ -36,9 +36,6 @@ export function SolverTrade() {
   );
 
   const [direction, setDirection] = useState<Direction>("buy");
-  useEffect(() => {
-    setEvmPickerOpen(false);
-  }, [evm, nock, direction]);
   const [usd, setUsd] = useState("");
   const [nockAmt, setNockAmt] = useState("");
   const [busy, setBusy] = useState(false);
@@ -67,6 +64,7 @@ export function SolverTrade() {
       : estOut != null && belowMinNock(estOut);
 
   function flip(): void {
+    setEvmPickerOpen(false);
     setDirection((d) => (d === "buy" ? "sell" : "buy"));
   }
 
@@ -190,6 +188,7 @@ export function SolverTrade() {
           ? "Connecting…"
           : "Connect Iris"
         : "Connect wallets";
+  const showEvmPicker = evmPickerOpen && connectTarget === "evm";
 
   async function onConnectWallets(): Promise<void> {
     if (connectBusy || !connectTarget) return;
@@ -314,7 +313,7 @@ export function SolverTrade() {
             >
               {connectLabel}
             </button>
-            {evmPickerOpen && connectTarget === "evm" && (
+            {showEvmPicker && (
               <>
                 <div className="wallet-backdrop" onClick={() => setEvmPickerOpen(false)} />
                 <div className="wallet-menu">
