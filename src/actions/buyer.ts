@@ -141,7 +141,7 @@ export interface ClaimDeps {
     lockRoot?: Digest;
     parentHash?: Digest;
     birthOutputIndex?: number;
-  }): Promise<string>;
+  }): Promise<{ txId: string; fee: bigint; received: bigint }>;
   assertPreimageMatchesHNock(jam: Uint8Array, hNock: Digest): Promise<void>;
 }
 
@@ -164,7 +164,7 @@ export async function claimNockAction(
     gift: string;
   },
   deps?: ClaimDeps
-): Promise<{ txId: string; swap: SwapPublic }> {
+): Promise<{ txId: string; swap: SwapPublic; fee: bigint; received: bigint }> {
   if (!input.preimageJam) throw new Error("No preimage. Please load the swap.");
 
   const d = deps ?? defaultClaimDeps();
@@ -180,7 +180,7 @@ export async function claimNockAction(
   const lockFirstName = lockFirstNameRaw.trim() as Digest;
   const gift = (input.gift || input.swap.nockGift.toString()) as Nicks;
 
-  const txId = await d.claimNock({
+  const { txId, fee, received } = await d.claimNock({
     lockFirstName,
     preimageJam: input.preimageJam,
     hNock: input.swap.hNock,
@@ -192,7 +192,7 @@ export async function claimNockAction(
     birthOutputIndex: input.swap.birthOutputIndex,
   });
   input.swap.nockClaimTxId = txId;
-  return { txId, swap: input.swap };
+  return { txId, swap: input.swap, fee, received };
 }
 
 // ---------------------------------------------------------------------------

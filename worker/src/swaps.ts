@@ -38,6 +38,15 @@ export interface Env {
   EMAIL_FROM?: string;
   /** Site base URL for notification deep links (default https://atomicnock.com). */
   APP_URL?: string;
+  /** NEAR Intents 1Click. JWT is a SECRET (distribution-channel; removes the
+   *  0.2% platform fee) — kept server-side so the browser never sees it. */
+  ONECLICK_JWT?: string;
+  ONECLICK_URL?: string; // default https://1click.chaindefuser.com
+  /** App-fee revenue (vars): a NEAR account + bps injected into every quote. */
+  ONECLICK_APPFEE_RECIPIENT?: string;
+  ONECLICK_APPFEE_BPS?: string;
+  /** Comma-separated pkhs allowed to publish a solver quote (empty = any session). */
+  SOLVER_PKHS?: string;
 }
 
 const SWAP_PREFIX = "swap:";

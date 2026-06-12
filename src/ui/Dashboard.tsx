@@ -54,10 +54,11 @@ export function Dashboard() {
   }> => {
     if (!nock) return { swaps: [], bids: [] };
     const keys = [nock.pkh, nock.address].filter(Boolean) as string[];
-    const [list, allBids] = await Promise.all([
+    const [list, feed] = await Promise.all([
       repo.listForNockPkh(nock.pkh),
-      repo.listBids().catch(() => [] as BidPublic[]),
+      repo.listFeed().catch(() => ({ swaps: [] as SwapPublic[], bids: [] as BidPublic[] })),
     ]);
+    const allBids = feed.bids;
     const hidden = getHiddenSwaps();
     const byId = new Map<string, SwapPublic>();
     for (const s of list) {
@@ -266,7 +267,7 @@ export function Dashboard() {
         <button type="button" onClick={() => navigate("/")}>
           Back to market
         </button>
-        <button type="button" onClick={() => navigate("/new")}>
+        <button type="button" onClick={() => navigate("/market")}>
           Direct swap (advanced)
         </button>
       </div>

@@ -17,9 +17,8 @@
  *   POST /swap/:id/cancel               -> seller cancels an unclaimed open swap
  *   POST /swap/:id/advance              -> party writes their progress fields
  *   GET  /swap/:id                      -> swap record
- *   GET  /open?cursor=&limit=           -> { swaps, cursor?, complete } (marketplace)
+ *   GET  /feed?limit=                   -> { swaps, bids, ts } (cached marketplace)
  *   POST /bid                           -> buy order: pay USDC/wNOCK for native NOCK
- *   GET  /bids                          -> open buy orders (marketplace)
  *   POST /bid/:id/fill                  -> NOCK holder fills a bid (creates the swap)
  *   POST /bid/:id/cancel                -> creator cancels their open bid
  *   GET  /list?prefix=&cursor=&limit=   -> { keys, cursor?, complete }
@@ -33,18 +32,51 @@
  *   POST /profile/email/verify          -> confirm the 6-digit code
  *   POST /profile/email/remove          -> drop the email binding
  *   POST /tg/webhook                    -> Telegram bot updates (secret header)
+ *   GET  /solver/state/swaps            -> solver tracked swaps (solver session)
+ *   PUT  /solver/state/swaps/:hEvm      -> upsert tracked swap
+ *   PATCH /solver/state/swaps/:hEvm     -> patch phase / metadata
+ *   PUT  /solver/state/swaps/:hEvm/secret -> persist seller preimage
+ *   GET/POST /solver/state/pnl          -> P&L ledger
+ *   GET  /solver/state/pnl/summary      -> P&L totals
+ *   GET  /solver/status                 -> { online } (heartbeat, not stale quote)
+ *   POST /solver/rfq                    -> create sized quote request
+ *   GET  /solver/rfq/:id                -> poll RFQ result
+ *   GET  /solver/rfq/pending            -> pending RFQs (solver session)
+ *   POST /solver/rfq/:id/respond          -> price an RFQ (solver session)
+ *   POST /solver/heartbeat              -> solver liveness (solver session)
  */
 import {
   createSwap,
   claimSwap,
   advanceSwap,
   cancelSwap,
-  listOpenSwaps,
   loadSwap,
   SwapError,
   type Env,
 } from "./swaps.js";
-import { createBid, listBids, cancelBid, fillBid, lookupBid } from "./bids.js";
+import { createBid, cancelBid, fillBid, lookupBid } from "./bids.js";
+import { getMarketFeed, invalidateMarketFeed } from "./feed.js";
+import { oneClickQuote, oneClickGet, oneClickPost } from "./oneclick.js";
+import {
+  createRfq,
+  getRfq,
+  isSolverOnline,
+  listPendingRfqs,
+  respondRfq,
+  touchHeartbeat,
+} from "./solver-rfq.js";
+import { allowedSolver } from "./solver-auth.js";
+import {
+  appendPnl,
+  listPnl,
+  listTrackedSwaps,
+  loadTrackedSwap,
+  patchTrackedSwap,
+  pnlSummary,
+  putSwapSecret,
+  upsertTrackedSwap,
+} from "./solver-store.js";
+import type { PnlEntry, TrackedSwap, TrackedSwapPatch } from "../../src/solver-state.js";
 import {
   makeChallenge,
   validateChallenge,
@@ -112,6 +144,13 @@ async function requireSession(req: Request, env: Env): Promise<string> {
   return pkh;
 }
 
+/** Session + SOLVER_PKHS gate for solver-only persistence routes. */
+async function requireSolverSession(req: Request, env: Env): Promise<string> {
+  const pkh = await requireSession(req, env);
+  if (!allowedSolver(env, pkh)) throw new SwapError(403, "not an authorized solver pkh");
+  return pkh;
+}
+
 export default {
   async fetch(req: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
     if (req.method === "OPTIONS") return new Response(null, { headers: CORS });
@@ -153,6 +192,7 @@ export default {
         await enforceRate(env.RL_WRITE, pkh);
         const body = (await req.json()) as CreateBody;
         const rec = await createSwap(env, body.swap, pkh);
+        ctx.waitUntil(invalidateMarketFeed(env));
         return json({ ok: true, swap: rec });
       }
 
@@ -164,7 +204,7 @@ export default {
         const hEvm = decodeURIComponent(claimMatch[1]);
         const prev = await loadSwap(env, hEvm); // snapshot for transition diff
         const rec = await claimSwap(env, hEvm, body.buyerEth, pkh);
-        ctx.waitUntil(dispatch(env, rec, swapEvents(prev, rec)));
+        ctx.waitUntil(Promise.all([invalidateMarketFeed(env), dispatch(env, rec, swapEvents(prev, rec))]));
         return json({ ok: true, swap: rec });
       }
 
@@ -173,6 +213,7 @@ export default {
         const pkh = await requireSession(req, env);
         await enforceRate(env.RL_WRITE, pkh);
         await cancelSwap(env, decodeURIComponent(cancelMatch[1]), pkh);
+        ctx.waitUntil(invalidateMarketFeed(env));
         return json({ ok: true });
       }
 
@@ -181,6 +222,7 @@ export default {
         await enforceRate(env.RL_WRITE, pkh);
         const body = (await req.json()) as { bid?: Record<string, unknown> };
         const rec = await createBid(env, body.bid ?? {}, pkh);
+        ctx.waitUntil(invalidateMarketFeed(env));
         return json({ ok: true, bid: rec });
       }
 
@@ -197,13 +239,16 @@ export default {
         );
         // The bid creator (now the swap's buyer) waits for the filler's NOCK lock.
         ctx.waitUntil(
-          dispatch(env, swap, [
-            {
-              recipientPkh: bid.creatorPkh,
-              title: "Buy order filled",
-              body: "Someone is selling you NOCK — they lock NOCK first, then you'll be prompted to lock your side on Base.",
-              url: "",
-            },
+          Promise.all([
+            invalidateMarketFeed(env),
+            dispatch(env, swap, [
+              {
+                recipientPkh: bid.creatorPkh,
+                title: "Buy order filled",
+                body: "Someone is selling you NOCK — they lock NOCK first, then you'll be prompted to lock your side on Base.",
+                url: "",
+              },
+            ]),
           ])
         );
         return json({ ok: true, swap });
@@ -214,6 +259,7 @@ export default {
         const pkh = await requireSession(req, env);
         await enforceRate(env.RL_WRITE, pkh);
         await cancelBid(env, decodeURIComponent(bidCancelMatch[1]), pkh);
+        ctx.waitUntil(invalidateMarketFeed(env));
         return json({ ok: true });
       }
 
@@ -359,20 +405,143 @@ export default {
         return json({ ok: true });
       }
 
-      // --- reads (open) -------------------------------------------------------
-      if (path === "/open" && req.method === "GET") {
-        // Marketplace: open swaps anyone can browse and fill.
+      // --- 1Click proxy (JWT + appFees injected server-side) ------------------
+      // The browser hits these so the distribution-channel JWT (fee-free) and
+      // our appFees never live in the frontend bundle.
+      if (path === "/oneclick/quote" && req.method === "POST") {
         await enforceRate(env.RL_READ, clientIp(req));
-        const cursor = url.searchParams.get("cursor") ?? undefined;
-        const limit = Number(url.searchParams.get("limit") ?? "50");
-        return json(await listOpenSwaps(env, cursor, limit));
+        const body = (await req.json()) as Record<string, unknown>;
+        return oneClickQuote(env, body);
+      }
+      if (path.startsWith("/oneclick/") && req.method === "GET") {
+        await enforceRate(env.RL_READ, clientIp(req));
+        const sub = path.slice("/oneclick/".length);
+        return oneClickGet(env, sub, url.search);
+      }
+      if (path.startsWith("/oneclick/") && req.method === "POST") {
+        await enforceRate(env.RL_READ, clientIp(req));
+        const sub = path.slice("/oneclick/".length);
+        return oneClickPost(env, sub, await req.json().catch(() => ({})));
       }
 
-      if (path === "/bids" && req.method === "GET") {
-        // Marketplace: open buy orders anyone can browse and fill.
+      // --- marketplace feed (cached) ------------------------------------------
+      if (path === "/feed" && req.method === "GET") {
         await enforceRate(env.RL_READ, clientIp(req));
         const limit = Number(url.searchParams.get("limit") ?? "50");
-        return json({ bids: await listBids(env, limit) });
+        const feed = await getMarketFeed(env, limit);
+        return json(feed);
+      }
+
+      // --- solver RFQ (UI requests sized quotes; solver prices on its host) ----
+      if (path === "/solver/status" && req.method === "GET") {
+        await enforceRate(env.RL_READ, clientIp(req));
+        return json({ online: await isSolverOnline(env) });
+      }
+      if (path === "/solver/rfq" && req.method === "POST") {
+        await enforceRate(env.RL_READ, clientIp(req));
+        const body = (await req.json()) as { side?: unknown; amountIn?: unknown };
+        return json(await createRfq(env, body));
+      }
+      if (path === "/solver/rfq/pending" && req.method === "GET") {
+        await requireSolverSession(req, env);
+        await enforceRate(env.RL_READ, clientIp(req));
+        const rfqs = await listPendingRfqs(env);
+        return json({ rfqs });
+      }
+      const rfqRespondMatch = path.match(/^\/solver\/rfq\/([^/]+)\/respond$/);
+      if (rfqRespondMatch && req.method === "POST") {
+        const pkh = await requireSolverSession(req, env);
+        await enforceRate(env.RL_WRITE, pkh);
+        const id = decodeURIComponent(rfqRespondMatch[1]);
+        const body = (await req.json()) as {
+          status?: "ready" | "rejected";
+          amountOut?: string;
+          pricePerNock?: number;
+          maxAmountIn?: string;
+          reason?: string;
+        };
+        if (body.status !== "ready" && body.status !== "rejected") {
+          throw new SwapError(400, "status must be ready or rejected");
+        }
+        return json(await respondRfq(env, id, pkh, body));
+      }
+      const rfqGetMatch = path.match(/^\/solver\/rfq\/([^/]+)$/);
+      if (rfqGetMatch && req.method === "GET") {
+        await enforceRate(env.RL_READ, clientIp(req));
+        const id = decodeURIComponent(rfqGetMatch[1]);
+        const rfq = await getRfq(env, id);
+        if (!rfq) return json({ error: "not found" }, 404);
+        return json(rfq);
+      }
+      if (path === "/solver/heartbeat" && req.method === "POST") {
+        const pkh = await requireSolverSession(req, env);
+        await enforceRate(env.RL_WRITE, pkh);
+        await touchHeartbeat(env, pkh);
+        return json({ ok: true });
+      }
+
+      // --- solver state persistence (RAM cache on bot; KV is durable store) ----
+      if (path === "/solver/state/swaps" && req.method === "GET") {
+        const pkh = await requireSolverSession(req, env);
+        await enforceRate(env.RL_READ, clientIp(req));
+        return json({ swaps: await listTrackedSwaps(env, pkh) });
+      }
+
+      const solverSecretMatch = path.match(/^\/solver\/state\/swaps\/([^/]+)\/secret$/);
+      if (solverSecretMatch && req.method === "PUT") {
+        const pkh = await requireSolverSession(req, env);
+        await enforceRate(env.RL_WRITE, pkh);
+        const hEvm = decodeURIComponent(solverSecretMatch[1]);
+        const body = (await req.json()) as { secretHex?: string };
+        if (!body.secretHex) throw new SwapError(400, "missing secretHex");
+        const swap = await putSwapSecret(env, pkh, hEvm, body.secretHex);
+        return json({ ok: true, swap });
+      }
+
+      const solverSwapMatch = path.match(/^\/solver\/state\/swaps\/([^/]+)$/);
+      if (solverSwapMatch && req.method === "GET") {
+        const pkh = await requireSolverSession(req, env);
+        await enforceRate(env.RL_READ, clientIp(req));
+        const hEvm = decodeURIComponent(solverSwapMatch[1]);
+        const swap = await loadTrackedSwap(env, pkh, hEvm);
+        if (!swap) return json({ error: "not found" }, 404);
+        return json(swap);
+      }
+      if (solverSwapMatch && req.method === "PUT") {
+        const pkh = await requireSolverSession(req, env);
+        await enforceRate(env.RL_WRITE, pkh);
+        const hEvm = decodeURIComponent(solverSwapMatch[1]);
+        const body = (await req.json()) as TrackedSwap;
+        if (!body.hEvm) body.hEvm = hEvm;
+        if (body.hEvm.toLowerCase() !== hEvm.toLowerCase()) throw new SwapError(400, "hEvm mismatch");
+        const swap = await upsertTrackedSwap(env, pkh, body);
+        return json({ ok: true, swap });
+      }
+      if (solverSwapMatch && req.method === "PATCH") {
+        const pkh = await requireSolverSession(req, env);
+        await enforceRate(env.RL_WRITE, pkh);
+        const hEvm = decodeURIComponent(solverSwapMatch[1]);
+        const body = (await req.json()) as TrackedSwapPatch;
+        const swap = await patchTrackedSwap(env, pkh, hEvm, body);
+        return json({ ok: true, swap });
+      }
+
+      if (path === "/solver/state/pnl" && req.method === "GET") {
+        const pkh = await requireSolverSession(req, env);
+        await enforceRate(env.RL_READ, clientIp(req));
+        return json({ pnl: await listPnl(env, pkh) });
+      }
+      if (path === "/solver/state/pnl" && req.method === "POST") {
+        const pkh = await requireSolverSession(req, env);
+        await enforceRate(env.RL_WRITE, pkh);
+        const body = (await req.json()) as PnlEntry;
+        const entry = await appendPnl(env, pkh, body);
+        return json({ ok: true, entry });
+      }
+      if (path === "/solver/state/pnl/summary" && req.method === "GET") {
+        const pkh = await requireSolverSession(req, env);
+        await enforceRate(env.RL_READ, clientIp(req));
+        return json(pnlSummary(await listPnl(env, pkh)));
       }
 
       const bidGetMatch = path.match(/^\/bid\/([^/]+)$/);

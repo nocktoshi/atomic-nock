@@ -12,6 +12,15 @@ import {
   pickLargestNote,
 } from "./balance.js";
 
+export interface ClaimResult {
+  /** Broadcast Nockchain claim tx id. */
+  txId: string;
+  /** Declared network fee for the claim tx, in nicks (deducted from the gift). */
+  fee: bigint;
+  /** NOCK the buyer actually receives = gift − fee, in nicks. */
+  received: bigint;
+}
+
 export async function claimNock(
   wallet: NockWalletSession,
   params: {
@@ -28,7 +37,7 @@ export async function claimNock(
   /** Output index of the HTLC gift note in the seller's lock tx (usually 0). */
   birthOutputIndex?: number;
   }
-): Promise<string> {
+): Promise<ClaimResult> {
   await initIrisWasm();
   const Iris = await getIrisWasm();
   await initRoseWasm();
@@ -205,7 +214,24 @@ export async function claimNock(
   }
   console.debug("claim branch Pkh requirement matches current session pkh; extension should be able to provide the sig (hax preimage already embedded).");
 
+  // Read the claim's declared network fee + the net the buyer actually receives
+  // (gift − fee), so the UI stops overstating the amount. Best-effort and
+  // non-invasive — mirrors the value-conservation read in lock.ts and never
+  // touches the signing path below (which must stay byte-for-byte identical).
+  let fee = 0n;
+  let received = BigInt(params.gift.toString());
+  try {
+    const builtForRead = tx.build();
+    const raw = Iris.nockchainTxToRawTx(builtForRead);
+    fee = BigInt(Iris.rawTxTotalFees(raw));
+    const outs = Iris.rawTxV1Outputs(raw, 0, settings);
+    received = outs.reduce((s, o) => s + BigInt(o.assets as string | number | bigint), 0n);
+  } catch (e) {
+    console.warn("claim fee/received read failed (non-fatal):", e);
+  }
+
   const inputNotesForTx = [htlcNote].filter(Boolean) as Note[];
-  return signAndSendIrisTx(wallet, tx, inputNotesForTx);
+  const txId = await signAndSendIrisTx(wallet, tx, inputNotesForTx);
+  return { txId, fee, received };
 }
 

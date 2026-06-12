@@ -1,12 +1,10 @@
 import {
-  createPublicClient,
-  custom,
   decodeFunctionData,
   type Hex,
 } from "viem";
-import { CHAIN, tokenInfo, type TokenKey } from "../config.js";
+import { tokenInfo, type TokenKey } from "../config.js";
 import { HTLC_ABI } from "./htlc.js";
-import { getProvider } from "./providers.js";
+import { getEvmClients } from "./clients.js";
 import { hexToBytes } from "../swap.js";
 
 /** The HTLC instance for a swap's quote token (default USDC); throws if unset. */
@@ -23,10 +21,7 @@ function htlcAddressFor(token?: TokenKey): Hex {
 }
 
 function publicClient() {
-  return createPublicClient({
-    chain: CHAIN,
-    transport: custom(getProvider()),
-  });
+  return getEvmClients().publicClient;
 }
 
 /** Decode preimageJam from a Base HTLC withdraw transaction calldata. */

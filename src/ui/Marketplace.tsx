@@ -10,6 +10,7 @@ import { createPriceProvider } from "../market/price.js";
 import { useSession } from "./session.js";
 import { useLog, LogBox } from "./log.js";
 import { SwapBox } from "./SwapBox.js";
+import { TradeNav } from "./TradeNav.js";
 import {
   nicksToNock,
   quoteDisplay,
@@ -167,19 +168,14 @@ export function Marketplace() {
   const [sort, setSort] = useState<SortKey>("newest");
 
   const refresh = useCallback(async () => {
-    const [openSwaps, openBids] = await Promise.allSettled([
-      repo.listOpen(),
-      repo.listBids(),
-    ]);
-    if (openSwaps.status === "fulfilled") setAsks(openSwaps.value);
-    else {
+    try {
+      const { swaps, bids } = await repo.listFeed();
+      setAsks(swaps);
+      setBids(bids);
+    } catch (e) {
       setAsks([]);
-      logErr(openSwaps.reason);
-    }
-    if (openBids.status === "fulfilled") setBids(openBids.value);
-    else {
       setBids([]);
-      logErr(openBids.reason);
+      logErr(e);
     }
   }, [repo, logErr]);
 
@@ -264,77 +260,85 @@ export function Marketplace() {
   const loading = asks == null || bids == null;
 
   return (
-    <section className="panel">
-      <h2 className="flow-title">Swap NOCK</h2>
-      <SwapBox log={log} logErr={logErr} onBidCreated={() => void refresh()} />
-      <LogBox state={logState} />
+    <>
+      <TradeNav />
+      <section className="panel">
+        <h2 className="flow-title">OTC NOCK</h2>
+        <SwapBox log={log} logErr={logErr} onBidCreated={() => void refresh()} />
+        <div className="any-chain-row">
+          <button type="button" className="any-chain-link" onClick={() => navigate("/buy")}>
+            ⛓ Buy NOCK from any chain (ETH, USDC, …)
+          </button>
+        </div>
+        <LogBox state={logState} />
 
-      <div className="market-controls">
-        <div className="market-tabs" role="tablist" aria-label="Order side">
-          {(
-            [
-              ["all", "All orders"],
-              ["buy", "Buy NOCK"],
-              ["sell", "Sell NOCK"],
-            ] as const
-          ).map(([value, label]) => (
-            <button
-              key={value}
-              type="button"
-              role="tab"
-              aria-selected={side === value}
-              className={"market-tab" + (side === value ? " active" : "")}
-              onClick={() => setSide(value)}
+        <div className="market-controls">
+          <div className="market-tabs" role="tablist" aria-label="Order side">
+            {(
+              [
+                ["all", "All orders"],
+                ["buy", "Buy NOCK"],
+                ["sell", "Sell NOCK"],
+              ] as const
+            ).map(([value, label]) => (
+              <button
+                key={value}
+                type="button"
+                role="tab"
+                aria-selected={side === value}
+                className={"market-tab" + (side === value ? " active" : "")}
+                onClick={() => setSide(value)}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+          <div className="market-filters">
+            <select
+              aria-label="Token filter"
+              value={token}
+              onChange={(e) => setToken(e.target.value as TokenFilter)}
             >
-              {label}
-            </button>
-          ))}
+              <option value="all">All tokens</option>
+              <option value="USDC">USDC</option>
+              <option value="WNOCK">wNOCK</option>
+            </select>
+            <select
+              aria-label="Sort orders"
+              value={sort}
+              onChange={(e) => setSort(e.target.value as SortKey)}
+            >
+              <option value="newest">Newest</option>
+              <option value="price-asc">Price ↑</option>
+              <option value="price-desc">Price ↓</option>
+              <option value="amount">NOCK amount</option>
+            </select>
+          </div>
         </div>
-        <div className="market-filters">
-          <select
-            aria-label="Token filter"
-            value={token}
-            onChange={(e) => setToken(e.target.value as TokenFilter)}
-          >
-            <option value="all">All tokens</option>
-            <option value="USDC">USDC</option>
-            <option value="WNOCK">wNOCK</option>
-          </select>
-          <select
-            aria-label="Sort orders"
-            value={sort}
-            onChange={(e) => setSort(e.target.value as SortKey)}
-          >
-            <option value="newest">Newest</option>
-            <option value="price-asc">Price ↑</option>
-            <option value="price-desc">Price ↓</option>
-            <option value="amount">NOCK amount</option>
-          </select>
+
+        <div className="swaps-box">
+          {loading ? (
+            <p className="hint">Loading orders…</p>
+          ) : rows.length === 0 ? (
+            <p className="hint">
+              No open orders match. Post one above — it lists here automatically.
+            </p>
+          ) : (
+            rows.map((row) => (
+              <MarketCard
+                key={`${row.kind}:${row.key}`}
+                row={row}
+                nowSec={nowSec}
+                onAction={() =>
+                  navigate(row.kind === "ask" ? `/swap/${row.key}` : `/bid/${row.key}`)
+                }
+                onCancel={row.mine ? () => void cancelRow(row) : undefined}
+              />
+            ))
+          )}
         </div>
-      </div>
 
-      <div className="swaps-box">
-        {loading ? (
-          <p className="hint">Loading orders…</p>
-        ) : rows.length === 0 ? (
-          <p className="hint">
-            No open orders match. Post one above — it lists here automatically.
-          </p>
-        ) : (
-          rows.map((row) => (
-            <MarketCard
-              key={`${row.kind}:${row.key}`}
-              row={row}
-              nowSec={nowSec}
-              onAction={() =>
-                navigate(row.kind === "ask" ? `/swap/${row.key}` : `/bid/${row.key}`)
-              }
-              onCancel={row.mine ? () => void cancelRow(row) : undefined}
-            />
-          ))
-        )}
-      </div>
-
-    </section>
+      </section>
+    </>
   );
 }

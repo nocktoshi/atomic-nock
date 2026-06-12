@@ -66,9 +66,9 @@ function roleFor(swap: DraftSwap): "seller" | "buyer" {
 export class SwapRepository {
   constructor(private readonly api: SwapApi) {}
 
-  async get(hEvm: string): Promise<SwapPublic | null> {
+  async get(hEvm: string, opts?: { maxAgeMs?: number }): Promise<SwapPublic | null> {
     // GET /swap/:id endpoint
-    const rec = await this.api.get(hEvm);
+    const rec = await this.api.get(hEvm, opts);
     return rec ? decodeSwapParams(JSON.stringify(rec)) : null;
   }
 
@@ -95,10 +95,13 @@ export class SwapRepository {
     return this.listByPrefix(`${NOCK_IDX}${pkh}:`);
   }
 
-  /** Marketplace: open swaps anyone can browse (no auth needed). */
-  async listOpen(): Promise<SwapPublic[]> {
-    const recs = await this.api.listOpen();
-    return recs.map((r) => decodeSwapParams(JSON.stringify(r)));
+  /** Marketplace snapshot: open asks + bids (no auth needed). */
+  async listFeed(): Promise<{ swaps: SwapPublic[]; bids: BidPublic[] }> {
+    const { swaps, bids } = await this.api.listFeed();
+    return {
+      swaps: swaps.map((r) => decodeSwapParams(JSON.stringify(r))),
+      bids: bids.map(decodeBid).filter((b) => b.id),
+    };
   }
 
   /** Either participant cancels a swap while nothing is on-chain. */
@@ -120,12 +123,6 @@ export class SwapRepository {
       creatorEth: bid.creatorEth,
     });
     return decodeBid(rec);
-  }
-
-  /** Marketplace: open buy orders anyone can browse (no auth needed). */
-  async listBids(): Promise<BidPublic[]> {
-    const recs = await this.api.listBids();
-    return recs.map(decodeBid).filter((b) => b.id);
   }
 
   /** Read one buy order (open read): the open bid, where it went after a fill

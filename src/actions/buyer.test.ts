@@ -36,7 +36,7 @@ function makeSwap(overrides: Partial<SwapPublic> = {}): SwapPublic {
 
 function claimDeps(): ClaimDeps {
   return {
-    claimNock: vi.fn(async () => "tx-claim-123"),
+    claimNock: vi.fn(async () => ({ txId: "tx-claim-123", fee: 32768n, received: 26_000_000n })),
     assertPreimageMatchesHNock: vi.fn(async () => {}),
   };
 }

@@ -52,6 +52,9 @@ export async function generateSwapAction(
     refundHeight: string;
     /** Quote token on Base; absent = USDC. */
     token?: TokenKey;
+    /** Override the USDC window (seconds). Solver-facing flows use SHORT
+     *  windows — the window is the counterparty's free option. */
+    usdcTimeoutSec?: number;
   },
   deps?: GenerateSwapDeps
 ): Promise<{ swap: SwapPublic; preimageJam: Uint8Array; refundHeight: bigint }> {
@@ -86,7 +89,9 @@ export async function generateSwapAction(
         `${d.refundDelta} blocks.`
     );
   }
-  const usdcTimelock = BigInt(Math.floor(Date.now() / 1000) + d.usdcTimeoutSec);
+  const usdcTimelock = BigInt(
+    Math.floor(Date.now() / 1000) + (input.usdcTimeoutSec ?? d.usdcTimeoutSec)
+  );
   const swap: SwapPublic = {
     hNock,
     hEvm,
@@ -122,6 +127,8 @@ export async function fillBidAction(
     /** Filler's Base address (receives the quote token on withdraw). */
     sellerEth: string;
     refundHeight: string;
+    /** Override the USDC window (seconds) — see generateSwapAction. */
+    usdcTimeoutSec?: number;
   },
   deps?: GenerateSwapDeps
 ): Promise<{ swap: SwapPublic; preimageJam: Uint8Array }> {
@@ -134,6 +141,7 @@ export async function fillBidAction(
       gift: input.bid.nockGift.toString(),
       refundHeight: input.refundHeight,
       token: input.bid.token,
+      usdcTimeoutSec: input.usdcTimeoutSec,
     },
     deps
   );

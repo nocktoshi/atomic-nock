@@ -1,5 +1,4 @@
 import {
-  createPublicClient,
   createWalletClient,
   custom,
   formatUnits,
@@ -8,6 +7,7 @@ import {
 } from "viem";
 import { CHAIN, CHAIN_ID, tokenInfo, type TokenKey } from "../config.js";
 import { getProvider } from "./providers.js";
+import { getEvmClients } from "./clients.js";
 
 /** Resolve the ERC20 + HTLC addresses for a swap's quote token (default USDC). */
 function tokenCtx(token?: TokenKey): {
@@ -113,6 +113,16 @@ const ERC20_ABI = [
     outputs: [{ name: "", type: "bool" }],
   },
   {
+    name: "transfer",
+    type: "function",
+    stateMutability: "nonpayable",
+    inputs: [
+      { name: "to", type: "address" },
+      { name: "amount", type: "uint256" },
+    ],
+    outputs: [{ name: "", type: "bool" }],
+  },
+  {
     name: "decimals",
     type: "function",
     stateMutability: "view",
@@ -161,12 +171,9 @@ export async function computeSwapId(
   },
   token?: TokenKey
 ): Promise<Hex> {
-  const client = createPublicClient({
-    chain: CHAIN,
-    transport: custom(getProvider()),
-  });
+  const { publicClient } = getEvmClients();
   const { htlcAddress } = tokenCtx(token);
-  return client.readContract({
+  return publicClient.readContract({
     address: htlcAddress,
     abi: HTLC_ABI,
     functionName: "swapId",
@@ -189,15 +196,8 @@ export async function approveAndLock(params: {
   token?: TokenKey;
 }): Promise<{ swapId: Hex; lockHash: Hex; buyer: Address }> {
   const { tokenAddress, htlcAddress, symbol } = tokenCtx(params.token);
-  const wallet = createWalletClient({
-    chain: CHAIN,
-    transport: custom(getProvider()),
-  });
-  const [account] = await wallet.getAddresses();
-  const publicClient = createPublicClient({
-    chain: CHAIN,
-    transport: custom(getProvider()),
-  });
+  const { walletClient: wallet, publicClient, account: getAccount } = getEvmClients();
+  const account = await getAccount();
 
   // Scale by the token's REAL decimals (Base USDC is 6, wNOCK is 16, and a mock
   // token used in a test deployment may differ — hardcoding made the amount look
@@ -270,8 +270,8 @@ export async function approveAndLock(params: {
 /** Buyer reclaims the locked quote token after the timelock (contract enforces it). */
 export async function refundUsdc(swapId: Hex, token?: TokenKey): Promise<Hex> {
   const { htlcAddress } = tokenCtx(token);
-  const wallet = createWalletClient({ chain: CHAIN, transport: custom(getProvider()) });
-  const [account] = await wallet.getAddresses();
+  const { walletClient: wallet, account: getAccount } = getEvmClients();
+  const account = await getAccount();
   return wallet.writeContract({
     address: htlcAddress,
     abi: HTLC_ABI,
@@ -296,7 +296,7 @@ export async function getOnchainLock(
 ): Promise<OnchainLock | null> {
   const t = tokenInfo(token);
   if (!t.htlc) return null;
-  const client = createPublicClient({ chain: CHAIN, transport: custom(getProvider()) });
+  const { publicClient: client } = getEvmClients();
   const [buyer, seller, amount, , , withdrawn, refunded] =
     await client.readContract({
       address: t.htlc,
@@ -311,7 +311,7 @@ export async function getOnchainLock(
 export async function getFeeBps(token?: TokenKey): Promise<number> {
   const t = tokenInfo(token);
   if (!t.htlc) return 50;
-  const client = createPublicClient({ chain: CHAIN, transport: custom(getProvider()) });
+  const { publicClient: client } = getEvmClients();
   const bps = await client.readContract({
     address: t.htlc,
     abi: HTLC_ABI,
@@ -327,11 +327,8 @@ export async function withdrawUsdc(params: {
   token?: TokenKey;
 }): Promise<Hex> {
   const { htlcAddress } = tokenCtx(params.token);
-  const wallet = createWalletClient({
-    chain: CHAIN,
-    transport: custom(getProvider()),
-  });
-  const [account] = await wallet.getAddresses();
+  const { walletClient: wallet, account: getAccount } = getEvmClients();
+  const account = await getAccount();
   return wallet.writeContract({
     address: htlcAddress,
     abi: HTLC_ABI,
@@ -361,7 +358,7 @@ export async function getTokenDecimals(token?: TokenKey): Promise<number> {
   const { address } = tokenInfo(token);
   const hit = cachedDecimals.get(address);
   if (hit != null) return hit;
-  const client = createPublicClient({ chain: CHAIN, transport: custom(getProvider()) });
+  const { publicClient: client } = getEvmClients();
   const d = await client.readContract({
     address,
     abi: ERC20_ABI,
@@ -374,6 +371,17 @@ export async function getTokenDecimals(token?: TokenKey): Promise<number> {
 /** @deprecated alias for `getTokenDecimals()` (USDC). */
 export function getUsdcDecimals(): Promise<number> {
   return getTokenDecimals();
+}
+
+/** A holder's quote-token balance as a decimal number (e.g. 8.88 USDC). */
+export async function getTokenBalance(owner: Address, token?: TokenKey): Promise<number> {
+  const { address } = tokenInfo(token);
+  const { publicClient: client } = getEvmClients();
+  const [balance, decimals] = await Promise.all([
+    client.readContract({ address, abi: ERC20_ABI, functionName: "balanceOf", args: [owner] }),
+    getTokenDecimals(token),
+  ]);
+  return Number(formatUnits(balance, decimals));
 }
 
 /** Human quote amount → atomic units, using the token's real on-chain decimals. */

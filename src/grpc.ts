@@ -1,4 +1,5 @@
 import { getNockRpcOverride, DEFAULT_NOCK_RPC } from "./app/settings.js";
+import { readEnv, isDev } from "./env.js";
 
 /** gRPC-Web endpoint.
  * - User override (Settings → Nockchain RPC; localStorage + profile-synced) wins
@@ -9,9 +10,9 @@ export function getGrpcWebUrl(): string {
   const override = getNockRpcOverride();
   if (override) return override.replace(/\/$/, "");
 
-  const upstream = (import.meta.env.VITE_NOCK_GRPC_UPSTREAM ?? "").trim();
+  const upstream = (readEnv("VITE_NOCK_GRPC_UPSTREAM") ?? "").trim();
 
-  if (import.meta.env.DEV && typeof window !== "undefined") {
+  if (isDev() && typeof window !== "undefined") {
     return window.location.origin;
   }
 
@@ -26,7 +27,7 @@ export function grpcFetchFailureHint(endpoint: string): string {
       "gRPC-Web points at Envoy (:8080) but nothing is listening. "
     );
   }
-  if (import.meta.env.DEV) {
+  if (isDev()) {
     return (
       "Browser could not reach the gRPC proxy. Restart `npm run dev` in web/ and use " +
       "http://localhost:5173 (not a built preview on another port)."

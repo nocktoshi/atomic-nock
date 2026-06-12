@@ -1,7 +1,7 @@
 :root {
   --bg: #91bd13;;
   --card: #bd4213c7;
-  --border: #4216cd;
+  --border: #d53b00;
   --text: #520fa0;
   --muted: #7bd332;
   --accent: #c08a21;
@@ -310,28 +310,6 @@ main {
   flex-shrink: 0;
 }
 
-.my-swaps-pill {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.45rem;
-  margin-top: 0;
-  padding: 0.5rem 1rem;
-  border: none;
-  border-radius: 999px;
-  font-size: 0.85rem;
-  font-weight: 700;
-  cursor: pointer;
-  color: var(--text);
-  background: linear-gradient(135deg, var(--card), var(--warn));
-  transition: opacity 0.15s ease, transform 0.08s ease;
-  white-space: nowrap;
-}
-
-.my-swaps-pill:hover {
-  opacity: 0.88;
-  background: linear-gradient(135deg, var(--card), var(--warn));
-}
-
 /* --- Dashboard --- */
 .price-banner {
   text-align: right;
@@ -618,6 +596,39 @@ main {
   text-align: right;
 }
 
+.swap-card-row.sub {
+  font-size: 0.72rem;
+  font-weight: 500;
+  opacity: 0.8;
+  padding-top: 0;
+}
+
+.swap-card-row.sub .k {
+  font-weight: 600;
+}
+
+.swap-card-row .v.mono {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.tx-link {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.72rem;
+  color: var(--text);
+  background: var(--swap-flip-bg, rgba(255, 255, 255, 0.05));
+  border: 1px solid var(--accent-dim);
+  border-radius: 6px;
+  padding: 0.1rem 0.4rem;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.tx-link:hover {
+  border-color: var(--accent);
+}
+
 .swap-card.copied {
   box-shadow: 0 0 0 2px #2e7d32;
 }
@@ -721,6 +732,9 @@ label {
 }
 
 .swap-token.static {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
   cursor: default;
   user-select: none;
 }
@@ -759,6 +773,10 @@ select.swap-token {
 .swap-rate {
   text-align: center;
   margin-top: 0.35rem;
+}
+
+.swap-rate.quoting {
+  animation: blk-blink 1.1s ease-in-out infinite;
 }
 
 /* --- Token icons (NOCK / wNOCK / USDC with Base badge) --- */
@@ -856,6 +874,229 @@ select.swap-token {
   font-size: 0.75rem;
 }
 
+/* --- Friendly progress timeline (auto-driven swaps) --- */
+.progress-steps {
+  list-style: none;
+  margin: 0.75rem 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+}
+
+.pstep {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.65rem;
+  padding: 0.45rem 0;
+  position: relative;
+}
+
+/* Connector line between markers. */
+.pstep:not(:last-child)::after {
+  content: "";
+  position: absolute;
+  left: 0.78rem;
+  top: 2.1rem;
+  bottom: -0.45rem;
+  width: 2px;
+  background: var(--border);
+  opacity: 0.35;
+}
+
+.pstep-marker {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.6rem;
+  height: 1.6rem;
+  border-radius: 50%;
+  font-size: 0.8rem;
+  font-weight: 700;
+  border: 2px solid var(--border);
+  background: var(--bg);
+  color: var(--text);
+  z-index: 1;
+}
+
+.pstep.done .pstep-marker {
+  background: var(--accent-dim);
+  border-color: var(--accent-dim);
+  color: #fff;
+}
+
+.pstep.active .pstep-marker {
+  border-color: var(--warn);
+}
+
+.pstep.stalled .pstep-marker {
+  background: var(--warn);
+  border-color: var(--warn);
+  color: #3a0a0a;
+}
+
+.pstep.pending {
+  opacity: 0.45;
+}
+
+.pstep-body {
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+  padding-top: 0.15rem;
+}
+
+.pstep-label {
+  font-size: 0.88rem;
+  font-weight: 700;
+  color: var(--text);
+}
+
+.pstep.done .pstep-label {
+  opacity: 0.75;
+}
+
+.pstep-hint {
+  font-size: 0.75rem;
+  color: var(--muted);
+}
+
+.pstep-elapsed {
+  font-weight: 700;
+}
+
+.pstep-spinner {
+  display: block;
+  width: 0.85rem;
+  height: 0.85rem;
+  border-radius: 50%;
+  border: 2px solid var(--warn);
+  border-top-color: transparent;
+  animation: pstep-spin 0.9s linear infinite;
+}
+
+@keyframes pstep-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* --- Block timeline (Nockchain confirmation progress) --- */
+.block-timeline {
+  display: flex;
+  align-items: stretch;
+  gap: 0.5rem;
+  margin: 0.4rem 0 0.2rem 2.25rem;
+}
+
+.blk {
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+  padding: 0.4rem 0.7rem;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--bg);
+}
+
+.blk-num {
+  font-size: 0.82rem;
+  font-weight: 700;
+  color: var(--text);
+}
+
+.blk-sub {
+  font-size: 0.68rem;
+  color: currentColor;
+}
+
+.blk.confirmed {
+  border-color: var(--accent-dim);
+}
+
+.blk.pending {
+  border-color: var(--warn);
+  border-style: dashed;
+  animation: blk-blink 1.1s ease-in-out infinite;
+}
+
+@keyframes blk-blink {
+  0%, 100% {
+    opacity: 1;
+    box-shadow: 0 0 0 0 rgba(201, 162, 39, 0);
+  }
+  50% {
+    opacity: 0.55;
+    box-shadow: 0 0 0 3px rgba(201, 162, 39, 0.25);
+  }
+}
+
+.blk-arrow {
+  align-self: center;
+  color: var(--muted);
+  font-weight: 700;
+}
+
+/* Reassurance footnote under the timeline. */
+.trustless-note {
+  font-size: 0.75rem;
+  color: var(--muted);
+  margin: 0.5rem 0 0.25rem;
+}
+
+/* Inventory warning under the swap rate line. */
+.swap-warn {
+  color: var(--warn);
+  font-weight: 700;
+}
+
+/* Swap Native / OTC Book navigation. */
+.home-nav {
+  display: flex;
+  justify-content: center;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  margin: 0.25rem 0 0.75rem;
+}
+
+.any-chain-link.active {
+  background: linear-gradient(135deg, var(--card), var(--warn));
+  border-color: var(--card);
+}
+
+/* Home links under the solver swap box. */
+.home-links {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 0.5rem;
+  margin: 0.75rem 0;
+}
+
+/* "Buy from any chain" entry under the swap box. */
+.any-chain-row {
+  display: flex;
+  justify-content: center;
+  margin: 0.5rem 0 0.25rem;
+}
+
+.any-chain-link {
+  padding: 0.4rem 0.9rem;
+  border-radius: 999px;
+  background: linear-gradient(135deg, var(--card), var(--accent));
+  border: 1px solid var(--border);
+  color: var(--text);
+  font-size: 0.82rem;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.any-chain-link:hover {
+  background: linear-gradient(135deg, var(--accent), var(--card));
+  border-style: solid;
+}
+
 /* --- Marketplace order entry (SwapBox) + order book controls --- */
 .swap-flip {
   display: flex;
@@ -869,7 +1110,7 @@ select.swap-token {
   z-index: 1;
   padding: 0;
   background: var(--card);
-  border: 1px solid var(--muted);
+  border: 1px solid var(--border);
   border-radius: 8px;
   font-size: 1rem;
   color: var(--text);
@@ -879,6 +1120,28 @@ select.swap-token {
 
 .swap-flip:hover {
   opacity: 0.85;
+}
+
+.swap-flip.quoting {
+  animation: rfq-pulse 1.1s ease-in-out infinite;
+  color: var(--accent);
+  border-color: color-mix(in srgb, var(--accent) 45%, var(--border));
+}
+
+.swap-box.quoting .swap-panel:last-of-type .swap-amount {
+  opacity: 0.4;
+}
+
+@keyframes rfq-pulse {
+  0%,
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.55;
+    transform: scale(1.1);
+  }
 }
 
 .swap-submit {
@@ -972,7 +1235,7 @@ textarea {
 button {
   margin-top: 0.75rem;
   padding: 0.55rem 1rem;
-  background: var(--accent);
+  background: #ce982e;
   color: #590f91;
   font-weight: bold;
   border: none;
@@ -982,7 +1245,7 @@ button {
 }
 
 button:hover {
-  background: var(--accent-dim);
+  background: linear-gradient(135deg, var(--accent), var(--card));
 }
 
 button:disabled {
@@ -991,13 +1254,13 @@ button:disabled {
 }
 
 button.secondary {
-  background: transparent;
   color: var(--text);
+  background: #b3912773;
   border: 1px solid var(--border);
   margin-left: 0.5rem;
 }
 button.secondary:hover {
-  background: var(--card);
+  background: linear-gradient(135deg, var(--accent), var(--card));
 }
 
 /* Busy state during a wallet hand-off — subtle pulse so the user knows the

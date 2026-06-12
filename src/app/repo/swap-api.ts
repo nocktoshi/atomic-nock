@@ -28,18 +28,19 @@ export interface SwapApi {
   claim(hEvm: string, buyerEth: string): Promise<SwapRecord>;
   /** Write a party's progress fields. */
   advance(hEvm: string, fields: Record<string, unknown>): Promise<SwapRecord>;
-  /** Read a single swap by id (open read, no auth). Null if not found. */
-  get(hEvm: string): Promise<SwapRecord | null>;
+  /** Read a single swap by id (open read, no auth). Null if not found.
+   *  `maxAgeMs` caps how stale a cached record may be — live pollers pass a
+   *  value under their poll interval so server-side progress (solver claims,
+   *  locks, withdraws) isn't hidden by the default cache TTL. */
+  get(hEvm: string, opts?: { maxAgeMs?: number }): Promise<SwapRecord | null>;
   /** List index keys under a prefix (authenticated; server restricts to your own). */
   listKeys(prefix: string): Promise<string[]>;
-  /** Marketplace: open (buyer-less) swaps, newest first (open read, no auth). */
-  listOpen(): Promise<SwapRecord[]>;
+  /** Marketplace snapshot: open asks + bids in one response (open read, no auth). */
+  listFeed(): Promise<{ swaps: SwapRecord[]; bids: BidRecord[] }>;
   /** Either participant cancels a swap while nothing is on-chain. */
   cancel(hEvm: string): Promise<void>;
   /** Create a buy order: pay USDC/wNOCK for native NOCK. */
   createBid(bid: Record<string, unknown>): Promise<BidRecord>;
-  /** Marketplace: open buy orders, newest first (open read, no auth). */
-  listBids(): Promise<BidRecord[]>;
   /** Read one buy order by id (open read). A filled bid returns
    *  `{ filledHEvm }` pointing at the swap; null once cancelled/expired. */
   getBid(id: string): Promise<BidRecord | null>;
@@ -50,14 +51,18 @@ export interface SwapApi {
 }
 
 const CACHE_TTL_MS = 45_000;
+const FEED_CACHE_TTL_MS = 10_000;
 
 class HttpSwapApi implements SwapApi {
   constructor(private readonly baseUrl: string) {}
 
-  // Keyed by lowercase hEvm.
-  private readonly _cache = new Map<string, { rec: SwapRecord; exp: number }>();
+  // Keyed by lowercase hEvm; `at` is the write time so reads can apply their
+  // own freshness bound (see SwapApi.get maxAgeMs).
+  private readonly _cache = new Map<string, { rec: SwapRecord; at: number }>();
   // Deduplicate concurrent reads for the same key.
   private readonly _inflight = new Map<string, Promise<SwapRecord | null>>();
+  private _feedCache: { swaps: SwapRecord[]; bids: BidRecord[]; exp: number } | null = null;
+  private _feedInflight: Promise<{ swaps: SwapRecord[]; bids: BidRecord[] }> | null = null;
 
   private async post(path: string, body: unknown): Promise<SwapRecord> {
     const token = await ensureSession(this.baseUrl);
@@ -80,9 +85,10 @@ class HttpSwapApi implements SwapApi {
     // Cache the server's response so the next get() sees fresh data immediately.
     if (rec.hEvm) {
       const key = String(rec.hEvm).toLowerCase();
-      this._cache.set(key, { rec, exp: Date.now() + CACHE_TTL_MS });
+      this._cache.set(key, { rec, at: Date.now() });
       this._inflight.delete(key);
     }
+    this._feedCache = null;
     return rec;
   }
 
@@ -96,12 +102,13 @@ class HttpSwapApi implements SwapApi {
     return this.post(`/swap/${encodeURIComponent(hEvm)}/advance`, { fields });
   }
 
-  async get(hEvm: string): Promise<SwapRecord | null> {
+  async get(hEvm: string, opts?: { maxAgeMs?: number }): Promise<SwapRecord | null> {
     const key = hEvm.toLowerCase();
 
-    // Serve from cache while still fresh.
+    // Serve from cache while still fresh (callers can tighten the bound).
+    const ttl = Math.min(opts?.maxAgeMs ?? CACHE_TTL_MS, CACHE_TTL_MS);
     const hit = this._cache.get(key);
-    if (hit && Date.now() < hit.exp) return hit.rec;
+    if (hit && Date.now() - hit.at < ttl) return hit.rec;
 
     // Deduplicate concurrent requests for the same key.
     let p = this._inflight.get(key);
@@ -125,29 +132,31 @@ class HttpSwapApi implements SwapApi {
       throw new Error(msg || `swap read failed (${res.status})`);
     }
     const rec = (await res.json()) as SwapRecord;
-    this._cache.set(key, { rec, exp: Date.now() + CACHE_TTL_MS });
+    this._cache.set(key, { rec, at: Date.now() });
     return rec;
   }
-  async listOpen(): Promise<SwapRecord[]> {
-    // Public marketplace read — follow cursors up to a sane cap.
-    const out: SwapRecord[] = [];
-    let cursor: string | undefined;
-    const MAX_PAGES = 4; // 4 × 50 swaps
-    for (let i = 0; i < MAX_PAGES; i++) {
-      const qs = new URLSearchParams();
-      if (cursor) qs.set("cursor", cursor);
-      const res = await fetch(`${this.baseUrl}/open?${qs}`);
-      if (!res.ok) throw new Error(`marketplace list failed (${res.status})`);
-      const json = (await res.json()) as {
-        swaps?: SwapRecord[];
-        cursor?: string;
-        complete?: boolean;
-      };
-      out.push(...(json.swaps ?? []));
-      if (json.complete !== false || !json.cursor) break;
-      cursor = json.cursor;
+  private async fetchFeed(): Promise<{ swaps: SwapRecord[]; bids: BidRecord[] }> {
+    if (this._feedCache && Date.now() < this._feedCache.exp) {
+      return { swaps: this._feedCache.swaps, bids: this._feedCache.bids };
     }
-    return out;
+    if (!this._feedInflight) {
+      this._feedInflight = (async () => {
+        const res = await fetch(`${this.baseUrl}/feed`);
+        if (!res.ok) throw new Error(`feed failed (${res.status})`);
+        const json = (await res.json()) as { swaps?: SwapRecord[]; bids?: BidRecord[] };
+        const swaps = json.swaps ?? [];
+        const bids = json.bids ?? [];
+        this._feedCache = { swaps, bids, exp: Date.now() + FEED_CACHE_TTL_MS };
+        return { swaps, bids };
+      })().finally(() => {
+        this._feedInflight = null;
+      });
+    }
+    return this._feedInflight;
+  }
+
+  async listFeed(): Promise<{ swaps: SwapRecord[]; bids: BidRecord[] }> {
+    return this.fetchFeed();
   }
 
   async cancel(hEvm: string): Promise<void> {
@@ -163,14 +172,8 @@ class HttpSwapApi implements SwapApi {
     });
     const json = (await res.json().catch(() => ({}))) as { bid?: BidRecord; error?: string };
     if (!res.ok) throw new Error(json.error || `bid create failed (${res.status})`);
+    this._feedCache = null;
     return json.bid ?? {};
-  }
-
-  async listBids(): Promise<BidRecord[]> {
-    const res = await fetch(`${this.baseUrl}/bids`);
-    if (!res.ok) throw new Error(`bid list failed (${res.status})`);
-    const json = (await res.json()) as { bids?: BidRecord[] };
-    return json.bids ?? [];
   }
 
   async getBid(id: string): Promise<BidRecord | null> {
@@ -278,7 +281,12 @@ export class MemorySwapApi implements SwapApi {
   listKeys(prefix: string): Promise<string[]> {
     return this.kv.list(prefix);
   }
-  async listOpen(): Promise<SwapRecord[]> {
+  async listFeed(): Promise<{ swaps: SwapRecord[]; bids: BidRecord[] }> {
+    const [swaps, bids] = await Promise.all([this.listOpenSwaps(), this.listBidsLocal()]);
+    return { swaps, bids };
+  }
+
+  private async listOpenSwaps(): Promise<SwapRecord[]> {
     const keys = await this.kv.list(SWAP_PREFIX);
     const swaps = await Promise.all(
       keys.map((k) => this.load(k.slice(SWAP_PREFIX.length)))
@@ -309,7 +317,7 @@ export class MemorySwapApi implements SwapApi {
     return rec;
   }
 
-  async listBids(): Promise<BidRecord[]> {
+  private async listBidsLocal(): Promise<BidRecord[]> {
     const keys = await this.kv.list(BID_PREFIX);
     const bids = await Promise.all(
       keys.map(async (k) => {

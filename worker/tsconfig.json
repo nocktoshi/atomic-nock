@@ -9,5 +9,5 @@
     "lib": ["ES2022", "WebWorker"],
     "types": ["@cloudflare/workers-types"]
   },
-  "include": ["src"]
+  "include": ["src", "../src/solver-state.ts", "../src/market/solver-rfq.ts"]
 }

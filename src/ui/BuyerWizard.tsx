@@ -371,7 +371,7 @@ export function BuyerWizard({
     let alive = true;
     const tick = async () => {
       try {
-        const fresh = await repo.get(id);
+        const fresh = await repo.get(id, { maxAgeMs: 5000 });
         if (!alive || !fresh) return;
         if (!fresh.lockFirstName) {
           setLockCheck("waiting");

@@ -1,6 +1,6 @@
 /** Top-level app shell: global wallet bar + routes. */
 import { useEffect, useMemo, useState } from "react";
-import { Routes, Route, useNavigate, useParams } from "react-router-dom";
+import { Routes, Route, Navigate, useNavigate, useParams } from "react-router-dom";
 import type { SwapPublic, DraftSwap } from "../swap.js";
 import { roleForSwap } from "../app/roles.js";
 import { getSwapRepository } from "../app/repo/swap-repo.js";
@@ -9,6 +9,11 @@ import { WalletBar } from "./WalletBar.js";
 import { Dashboard } from "./Dashboard.js";
 import { Marketplace } from "./Marketplace.js";
 import { BidPage } from "./BidPage.js";
+import { BuyFromAnyChain } from "./BuyFromAnyChain.js";
+import { SolverTrade } from "./SolverTrade.js";
+import { TradeNav } from "./TradeNav.js";
+import { SolverSwap } from "./SolverSwap.js";
+import { SolverSell } from "./SolverSell.js";
 import { Settings } from "./Settings.js";
 import { SellerWizard } from "./SellerWizard.js";
 import { BuyerWizard } from "./BuyerWizard.js";
@@ -39,6 +44,52 @@ function BidRoute() {
     <div className="role-flow">
       <BackToMarket />
       <BidPage />
+    </div>
+  );
+}
+
+/** Home: unified solver swap box (buy ↔ sell via flipper). */
+function HomeRoute() {
+  const navigate = useNavigate();
+  return (
+    <>
+      <TradeNav />
+      <SolverTrade />
+      <div className="home-links">
+        <button type="button" className="any-chain-link" onClick={() => navigate("/buy")}>
+          ⛓ Buy from any chain (ETH, USDC on L2s, …)
+        </button>
+      </div>
+    </>
+  );
+}
+
+/** A specific in-progress solver buy, addressable by URL (resume / share). */
+function OrderRoute() {
+  return (
+    <div className="role-flow">
+      <BackToMarket />
+      <SolverSwap />
+    </div>
+  );
+}
+
+/** A specific in-progress solver sell, addressable by URL (resume / share). */
+function SellOrderRoute() {
+  return (
+    <div className="role-flow">
+      <BackToMarket />
+      <SolverSell />
+    </div>
+  );
+}
+
+/** Buy NOCK from any asset/chain via a 1Click hop → auto-bid. */
+function BuyRoute() {
+  return (
+    <div className="role-flow">
+      <BackToMarket />
+      <BuyFromAnyChain />
     </div>
   );
 }
@@ -158,14 +209,18 @@ export function App() {
         <WalletBar />
       </div>
       <Routes>
-        <Route path="/" element={<Marketplace />} />
+        <Route path="/" element={<HomeRoute />} />
+        <Route path="/sell" element={<Navigate to="/" replace />} />
         <Route path="/market" element={<Marketplace />} />
         <Route path="/dashboard" element={<DashboardRoute />} />
         <Route path="/settings" element={<SettingsRoute />} />
         <Route path="/new" element={<NewSwapRoute />} />
+        <Route path="/buy" element={<BuyRoute />} />
+        <Route path="/order/:id" element={<OrderRoute />} />
+        <Route path="/sell/:id" element={<SellOrderRoute />} />
         <Route path="/swap/:id" element={<SwapRoute />} />
         <Route path="/bid/:id" element={<BidRoute />} />
-        <Route path="*" element={<Marketplace />} />
+        <Route path="*" element={<HomeRoute />} />
       </Routes>
     </SessionProvider>
   );

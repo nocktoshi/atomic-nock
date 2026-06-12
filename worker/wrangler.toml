@@ -8,6 +8,13 @@ compatibility_flags = ["nodejs_compat"]
 APP_URL = "https://atomicnock.com"
 EMAIL_FROM = "notifications@atomicnock.com"
 TELEGRAM_BOT_NAME = "atomicnockbot"
+SOLVER_PKHS= "BUZWD8BdPehSUK7Er471SVLYsgbtAy9HwmpcfAckKxUL3RYHaf6RyGd"
+
+# NEAR Intents 1Click: app-fee revenue (a NEAR account + bps, 100 = 1%). The JWT
+# itself is a SECRET — set it with:  npx wrangler secret put ONECLICK_JWT
+# (distribution-channel JWT removes the 0.2% platform fee on 1Click hops).
+# ONECLICK_APPFEE_RECIPIENT = "yourname.near"
+# ONECLICK_APPFEE_BPS = "50"
 
 [[routes]]
 pattern = "api.atomicnock.com"

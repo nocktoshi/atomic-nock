@@ -95,8 +95,17 @@ function WalletBtn({
         <>
           <div className="wallet-backdrop" onClick={() => setOpen(false)} />
           <div className="wallet-menu">
-
-          <button
+            <button
+              type="button"
+              className="wallet-menu-item"
+              onClick={() => {
+                setOpen(false);
+                navigate("/dashboard");
+              }}
+            >
+              My Orders
+            </button>
+            <button
               type="button"
               className="wallet-menu-item"
               onClick={() => {
@@ -201,7 +210,6 @@ function EvmConnect({
 }
 
 export function WalletBar() {
-  const navigate = useNavigate();
   const { nock, evm, setNock, setEvm } = useSession();
   const [irisName, setIrisName] = useState<string | null>(null);
   const [irisNameFor, setIrisNameFor] = useState<string | undefined>(undefined);
@@ -357,13 +365,6 @@ export function WalletBar() {
         onDisconnect={disconnectEvm}
       />
       <div className="price-banner">{priceText}</div>
-      <button
-        type="button"
-        className="my-swaps-pill"
-        onClick={() => navigate("/dashboard")}
-      >
-        My Swaps
-      </button>
     </>
   );
 }

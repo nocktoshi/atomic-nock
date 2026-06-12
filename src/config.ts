@@ -1,22 +1,23 @@
 import type { Address } from "viem";
 import { base } from "viem/chains";
+import { readEnv, isProd } from "./env.js";
 
 export const NOCK_GRPC_UPSTREAM =
-  import.meta.env.VITE_NOCK_GRPC_UPSTREAM ?? "https://rpc.nockchain.net";
+  readEnv("VITE_NOCK_GRPC_UPSTREAM") ?? "https://rpc.nockchain.net";
 
 export const CHAIN = base;
-export const CHAIN_ID = Number(import.meta.env.VITE_CHAIN_ID ?? base.id);
+export const CHAIN_ID = Number(readEnv("VITE_CHAIN_ID") ?? base.id);
 
 /** Ethereum mainnet RPC for ENS lookups. Must allow browser CORS. The viem
  *  default (eth.merkle.io) does not, so we default to a CORS-friendly endpoint. */
 export const ETH_RPC_URL = (
-  import.meta.env.VITE_ETH_RPC_URL ?? "https://ethereum-rpc.publicnode.com"
+  readEnv("VITE_ETH_RPC_URL") ?? "https://ethereum-rpc.publicnode.com"
 ).trim();
 
 export const USDC_ADDRESS =
   "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913" as Address;
 
-export const HTLC_ADDRESS = (import.meta.env.VITE_HTLC_ADDRESS ??
+export const HTLC_ADDRESS = (readEnv("VITE_HTLC_ADDRESS") ??
   "0x5ac37e7A63b107d226d0b88129B8EB8b07172B75") as Address;
 
 /** Wrapped NOCK on Base (symbol "NOCK" on-chain; shown as "wNOCK" in the UI). */
@@ -25,7 +26,7 @@ export const WNOCK_ADDRESS =
 
 /** HTLC instance for wNOCK swaps. Empty until deployed — wNOCK is hidden in the UI. */
 export const WNOCK_HTLC_ADDRESS = (
-  import.meta.env.VITE_HTLC_ADDRESS_WNOCK ?? "0x606b807C32F15D28EB612eecB2A1603399a66545"
+  readEnv("VITE_HTLC_ADDRESS_WNOCK") ?? "0x606b807C32F15D28EB612eecB2A1603399a66545"
 ).trim() as Address | "";
 
 // --- Quote-token registry ------------------------------------------------------
@@ -59,19 +60,19 @@ export function tokenInfo(token?: string): TokenInfo {
 }
 
 /** Swap API base URL (the Worker). Empty in dev = in-memory store (not durable). */
-const kvFromEnv = (import.meta.env.VITE_KV_URL ?? "").trim();
+const kvFromEnv = (readEnv("VITE_KV_URL") ?? "").trim();
 export const KV_URL =
-  kvFromEnv || (import.meta.env.PROD ? "https://api.atomicnock.com" : "");
+  kvFromEnv || (isProd() ? "https://api.atomicnock.com" : "");
 
 /** VAPID public key for browser push (base64url). Empty = push hidden in the UI.
  *  Generate a pair with: npx web-push generate-vapid-keys */
-export const VAPID_PUBLIC_KEY = (import.meta.env.VITE_VAPID_PUBLIC_KEY ?? "").trim();
+export const VAPID_PUBLIC_KEY = (readEnv("VITE_VAPID_PUBLIC_KEY") ?? "").trim();
 
 /** Market price feed (NOCK/USD). Empty in dev = price hidden. */
-const priceFromEnv = (import.meta.env.VITE_PRICE_URL ?? "").trim();
+const priceFromEnv = (readEnv("VITE_PRICE_URL") ?? "").trim();
 export const PRICE_URL =
   priceFromEnv ||
-  (import.meta.env.PROD
+  (isProd()
     ? "https://api.coingecko.com/api/v3/simple/price?vs_currencies=usd&symbols=nock"
     : "");
 
@@ -100,3 +101,10 @@ export const SWAP_SAFETY_MARGIN_SEC = 4 * 3600; // 4h
 
 /** Refuse to lock USDC into a swap whose USDC refund opens sooner than this. */
 export const MIN_USDC_WINDOW_SEC = 60 * 60; // 1h
+
+/** USDC window for SOLVER-facing sell orders. Deliberately SHORT: once the
+ *  solver locks USDC, the remaining window is the seller's free option (execute
+ *  if NOCK fell, abandon if it pumped) — its value scales with √time, so a 2h
+ *  window is ~2.5× cheaper to write than the 12h OTC default. Must stay above
+ *  the worker's 1h open-ask pruning threshold + the solver's min-window gate. */
+export const SOLVER_ASK_WINDOW_SEC = 2 * 3600; // 2h
