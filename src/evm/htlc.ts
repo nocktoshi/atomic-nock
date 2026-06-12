@@ -70,6 +70,18 @@ export const HTLC_ABI = [
     outputs: [{ name: "", type: "bytes32" }],
   },
   {
+    name: "Locked",
+    type: "event",
+    inputs: [
+      { name: "swapId", type: "bytes32", indexed: true },
+      { name: "buyer", type: "address", indexed: true },
+      { name: "seller", type: "address", indexed: true },
+      { name: "amount", type: "uint256", indexed: false },
+      { name: "hashlock", type: "bytes32", indexed: false },
+      { name: "timelock", type: "uint256", indexed: false },
+    ],
+  },
+  {
     name: "Withdrawn",
     type: "event",
     inputs: [
@@ -265,6 +277,43 @@ export async function approveAndLock(params: {
     throw new Error(`${symbol} lock transaction reverted`);
   }
   return { swapId, lockHash, buyer: account };
+}
+
+const LOG_CHUNK_BLOCKS = 10n;
+const LOG_MAX_CHUNKS = 2000;
+
+/** Scan eth_getLogs in small windows (provider-safe) for a single indexed event. */
+export async function searchContractEventsChunked(args: {
+  address: Address;
+  eventName: "Locked" | "Withdrawn";
+  filter: Record<string, unknown>;
+  sinceMs?: number;
+}): Promise<Array<{ transactionHash: Hex }>> {
+  const { publicClient: client } = getEvmClients();
+  const head = await client.getBlockNumber();
+  const anchor = args.sinceMs ?? Date.now() - 6 * 3600_000;
+  const ageSec = Math.max(600, Math.ceil((Date.now() - anchor) / 1000) + 1800);
+  const lookback = BigInt(Math.min(Math.ceil(ageSec / 2), 80_000));
+  const minBlock = head > lookback ? head - lookback : 0n;
+
+  let toBlock = head;
+  for (let i = 0; i < LOG_MAX_CHUNKS && toBlock >= minBlock; i++) {
+    const fromBlock =
+      toBlock + 1n > LOG_CHUNK_BLOCKS ? toBlock - LOG_CHUNK_BLOCKS + 1n : 0n;
+    const windowFrom = fromBlock < minBlock ? minBlock : fromBlock;
+    const logs = await client.getContractEvents({
+      address: args.address,
+      abi: HTLC_ABI,
+      eventName: args.eventName,
+      args: args.filter,
+      fromBlock: windowFrom,
+      toBlock,
+    });
+    if (logs.length) return logs;
+    if (windowFrom <= minBlock) break;
+    toBlock = windowFrom - 1n;
+  }
+  return [];
 }
 
 /** Buyer reclaims the locked quote token after the timelock (contract enforces it). */

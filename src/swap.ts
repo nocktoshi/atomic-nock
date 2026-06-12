@@ -47,6 +47,8 @@ export interface SwapPublic {
   usdcRefundTxHash?: string;
   /** Nockchain tx id from the seller's NOCK refund. */
   nockRefundTxId?: string;
+  /** Worker optimistic-concurrency generation (read-only from API). */
+  version?: number;
 }
 
 /**
@@ -107,6 +109,7 @@ export function encodeSwapParams(params: SwapPublic): string {
     ...(params.nockClaimTxId ? { nockClaimTxId: params.nockClaimTxId } : {}),
     ...(params.usdcRefundTxHash ? { usdcRefundTxHash: params.usdcRefundTxHash } : {}),
     ...(params.nockRefundTxId ? { nockRefundTxId: params.nockRefundTxId } : {}),
+    ...(typeof params.version === "number" ? { version: params.version } : {}),
     nockGift: params.nockGift.toString(),
     nockRefundHeight: params.nockRefundHeight.toString(),
     usdcTimelock: params.usdcTimelock.toString(),
@@ -149,6 +152,7 @@ export function decodeSwapParams(json: string): SwapPublic {
     nockClaimTxId: str(raw.nockClaimTxId),
     usdcRefundTxHash: str(raw.usdcRefundTxHash),
     nockRefundTxId: str(raw.nockRefundTxId),
+    version: raw.version != null ? Number(raw.version) : undefined,
   };
 }
 

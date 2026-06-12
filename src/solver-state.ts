@@ -24,6 +24,8 @@ export interface TrackedSwap {
   lockSeenHeight?: number;
   /** Seller-only: last note consolidation broadcast (ms). */
   consolidatedAt?: number;
+  /** Buyer-only: USDC lock tx cached locally if worker publish lagged. */
+  pendingUsdcLockTx?: string;
 }
 
 export interface PnlEntry {
@@ -39,7 +41,14 @@ export interface PnlEntry {
 export type TrackedSwapPatch = Partial<
   Pick<
     TrackedSwap,
-    "phase" | "done" | "lockSeenHeight" | "consolidatedAt" | "quoteUsd" | "nockNicks" | "updatedAt"
+    | "phase"
+    | "done"
+    | "lockSeenHeight"
+    | "consolidatedAt"
+    | "quoteUsd"
+    | "nockNicks"
+    | "updatedAt"
+    | "pendingUsdcLockTx"
   >
 >;
 

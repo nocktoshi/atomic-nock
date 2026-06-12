@@ -3,7 +3,7 @@ import {
   type Hex,
 } from "viem";
 import { tokenInfo, type TokenKey } from "../config.js";
-import { HTLC_ABI } from "./htlc.js";
+import { HTLC_ABI, searchContractEventsChunked } from "./htlc.js";
 import { getEvmClients } from "./clients.js";
 import { hexToBytes } from "../swap.js";
 
@@ -55,17 +55,10 @@ export async function findPreimageFromSwapWithdraw(
   preimageJam: Uint8Array;
 }> {
   const htlcAddress = htlcAddressFor(token);
-  const client = publicClient();
-  const head = await client.getBlockNumber();
-  const fromBlock = head > 500_000n ? head - 500_000n : 0n;
-
-  const logs = await client.getContractEvents({
+  const logs = await searchContractEventsChunked({
     address: htlcAddress,
-    abi: HTLC_ABI,
     eventName: "Withdrawn",
-    args: { swapId },
-    fromBlock,
-    toBlock: "latest",
+    filter: { swapId },
   });
 
   if (!logs.length) {
