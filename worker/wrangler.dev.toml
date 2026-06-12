@@ -38,6 +38,21 @@ name = "RL_SOLVER"
 namespace_id = "1004"
 simple = { limit = 600, period = 60 }
 
+# Queue + HTTP-pull dev notes:
+# - HTTP pull is enabled on the *cloud* queue (dashboard or:
+#     npx wrangler queues consumer http add solver-in
+#   ). It is NOT simulated inside wrangler dev.
+[[queues.producers]]
+binding = "SOLVER_IN"
+queue = "solver-in"
+remote = true
+
+[[queues.consumers]]
+queue = "solver-out"
+max_batch_size = 10
+max_batch_timeout = 2
+max_retries = 5
+
 [[durable_objects.bindings]]
 name = "MARKET_DO"
 class_name = "Market"

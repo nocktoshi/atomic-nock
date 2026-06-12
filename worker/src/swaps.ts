@@ -10,6 +10,7 @@
 import type { SwapRecord } from "./contract.js";
 import type { RateLimiter } from "./ratelimit.js";
 import type { Market } from "./market-do.js";
+import type { SolverInboundEvent } from "./solver-events.js";
 
 export interface Env {
   SWAPS: KVNamespace;
@@ -50,6 +51,8 @@ export interface Env {
   ONECLICK_APPFEE_BPS?: string;
   /** Comma-separated pkhs allowed to publish a solver quote (empty = any session). */
   SOLVER_PKHS?: string;
+  /** Work queue: RFQs, marketplace events, swap transitions → solver VPS pull. */
+  SOLVER_IN?: Queue<SolverInboundEvent>;
 }
 
 export { SwapError } from "./errors.js";

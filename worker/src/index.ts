@@ -39,11 +39,10 @@
  *   GET/POST /solver/state/pnl          -> P&L ledger
  *   GET  /solver/state/pnl/summary      -> P&L totals
  *   GET  /solver/status                 -> { online } (heartbeat, not stale quote)
+ *   POST /solver/heartbeat              -> solver liveness (solver session)
  *   POST /solver/rfq                    -> create sized quote request
  *   GET  /solver/rfq/:id                -> poll RFQ result
- *   GET  /solver/rfq/pending            -> pending RFQs (solver session)
- *   POST /solver/rfq/:id/respond          -> price an RFQ (solver session)
- *   POST /solver/heartbeat              -> solver liveness (solver session)
+ *   (solver coordination is queue-based — see solver-queue.ts)
  */
 import {
   createSwap,
@@ -66,6 +65,15 @@ import {
   respondRfq,
   touchHeartbeat,
 } from "./solver-rfq.js";
+import {
+  emitSolverEvent,
+  handleSolverOutBatch,
+  isExternalAsk,
+  isExternalBid,
+  isSolverParticipant,
+} from "./solver-queue.js";
+import { rfqCreated, marketAskCreated, marketBidCreated, swapUpdated } from "./solver-events.js";
+import type { SolverOutboundEvent } from "./solver-events.js";
 import { allowedSolver } from "./solver-auth.js";
 import {
   appendPnl,
@@ -175,6 +183,10 @@ async function enforceReadRate(req: Request, env: Env): Promise<void> {
 }
 
 export default {
+  async queue(batch: MessageBatch<SolverOutboundEvent>, env: Env): Promise<void> {
+    await handleSolverOutBatch(batch, env);
+  },
+
   async fetch(req: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
     if (req.method === "OPTIONS") return new Response(null, { headers: CORS });
 
@@ -215,6 +227,9 @@ export default {
         await enforceRate(env.RL_WRITE, pkh);
         const body = (await req.json()) as CreateBody;
         const rec = await createSwap(env, body.swap, pkh);
+        if (isExternalAsk(env, rec)) {
+          ctx.waitUntil(emitSolverEvent(env, marketAskCreated(rec)));
+        }
         return json({ ok: true, swap: rec });
       }
 
@@ -227,6 +242,9 @@ export default {
         const prev = await loadSwap(env, hEvm); // snapshot for transition diff
         const rec = await claimSwap(env, hEvm, body.buyerEth, pkh);
         ctx.waitUntil(dispatch(env, rec, swapEvents(prev, rec)));
+        if (isSolverParticipant(env, rec)) {
+          ctx.waitUntil(emitSolverEvent(env, swapUpdated(rec)));
+        }
         return json({ ok: true, swap: rec });
       }
 
@@ -243,6 +261,9 @@ export default {
         await enforceRate(env.RL_WRITE, pkh);
         const body = (await req.json()) as { bid?: Record<string, unknown> };
         const rec = await createBid(env, body.bid ?? {}, pkh);
+        if (isExternalBid(env, rec)) {
+          ctx.waitUntil(emitSolverEvent(env, marketBidCreated(rec)));
+        }
         return json({ ok: true, bid: rec });
       }
 
@@ -268,6 +289,9 @@ export default {
               },
           ])
         );
+        if (isSolverParticipant(env, swap)) {
+          ctx.waitUntil(emitSolverEvent(env, swapUpdated(swap)));
+        }
         return json({ ok: true, swap });
       }
 
@@ -289,6 +313,9 @@ export default {
         const rec = await advanceSwap(env, hEvm, body.fields, pkh, body.expectedVersion);
         // Push Notifications
         ctx.waitUntil(dispatch(env, rec, swapEvents(prev, rec)));
+        if (isSolverParticipant(env, rec)) {
+          ctx.waitUntil(emitSolverEvent(env, swapUpdated(rec)));
+        }
         return json({ ok: true, swap: rec });
       }
 
@@ -456,7 +483,16 @@ export default {
       if (path === "/solver/rfq" && req.method === "POST") {
         await enforceRate(env.RL_READ, clientIp(req));
         const body = (await req.json()) as { side?: unknown; amountIn?: unknown };
-        return json(await createRfq(env, body));
+        const rfq = await createRfq(env, body);
+        if (rfq.status === "pending" && rfq.rfqId && rfq.side && rfq.amountIn) {
+          ctx.waitUntil(
+            emitSolverEvent(
+              env,
+              rfqCreated(rfq.rfqId, rfq.side, rfq.amountIn)
+            )
+          );
+        }
+        return json(rfq);
       }
       if (path === "/solver/rfq/pending" && req.method === "GET") {
         await requireSolverSession(req, env);

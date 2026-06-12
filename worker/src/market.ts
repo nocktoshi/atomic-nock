@@ -65,9 +65,9 @@ const MIN_NOCK_NICKS = 50n * 65536n;
 const RECORD_MAX_AGE_SEC = 30 * 24 * 3600;
 
 /** Solver must heartbeat within this window to count as online. */
-export const HEARTBEAT_MAX_AGE_MS = 55_000;
-/** An unanswered RFQ expires after this (covers one slow solver tick). */
-const RFQ_TTL_MS = 55_000;
+export const HEARTBEAT_MAX_AGE_MS = 90_000;
+/** An unanswered RFQ expires after this. */
+const RFQ_TTL_MS = 45_000;
 /** Answered records linger briefly so the UI's next poll can read them. */
 const ANSWERED_LINGER_MS = 120_000;
 

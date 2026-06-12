@@ -47,6 +47,17 @@ name = "RL_SOLVER"
 namespace_id = "1004"
 simple = { limit = 600, period = 60 }
 
+[[queues.producers]]
+binding = "SOLVER_IN"
+queue = "solver-in"
+
+[[queues.consumers]]
+queue = "solver-out"
+max_batch_size = 10
+max_batch_timeout = 2
+max_retries = 5
+dead_letter_queue = "solver-out-dlq"
+
 [[durable_objects.bindings]]
 name = "MARKET_DO"
 class_name = "Market"

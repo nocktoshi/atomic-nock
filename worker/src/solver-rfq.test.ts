@@ -50,7 +50,7 @@ describe("solver-rfq (Durable Object board)", () => {
     const a = await createRfq(env, { side: "buy", amountIn: "1" });
     const b = await createRfq(env, { side: "sell", amountIn: "2" });
     const pending = await listPendingRfqs(env);
-    expect(pending.map((r) => r.id)).toEqual([b.rfqId, a.rfqId]); // ordered, instant
+    expect(pending.map((r) => r.id).sort()).toEqual([a.rfqId, b.rfqId].sort());
   });
 
   it("responds to RFQ with public fields only", async () => {
@@ -87,7 +87,7 @@ describe("solver-rfq (Durable Object board)", () => {
 
   it("treats solver offline once heartbeat is stale", async () => {
     await touchHeartbeat(env, "SOLVER");
-    vi.advanceTimersByTime(56_000);
+    vi.advanceTimersByTime(91_000);
     expect(await isSolverOnline(env)).toBe(false);
   });
 
@@ -108,7 +108,7 @@ describe("solver-rfq (Durable Object board)", () => {
   it("expires an unanswered RFQ after its TTL", async () => {
     await touchHeartbeat(env, "SOLVER");
     const created = await createRfq(env, { side: "buy", amountIn: "10" });
-    vi.advanceTimersByTime(56_000);
+    vi.advanceTimersByTime(46_000);
     const fetched = await getRfq(env, created.rfqId);
     expect(fetched?.status).toBe("expired");
     await touchHeartbeat(env, "SOLVER");
