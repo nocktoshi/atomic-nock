@@ -27,7 +27,7 @@ const baseSwap = {
   hNock: "HN",
   sellerPkh: "SELLER",
   usdcTimelock: String(Math.floor(Date.now() / 1000) + 7200),
-  nockGift: "100",
+  nockGift: "655360",
   nockRefundHeight: "1",
   sellerEth: "0xseller",
   usdcAmount: "1",
@@ -64,7 +64,7 @@ describe("market feed cache", () => {
         creatorEth: "0x1111111111111111111111111111111111111111",
         token: "USDC",
         quoteAmount: "10",
-        nockGift: "1000",
+        nockGift: "1310720",
       },
       "BUYER"
     );

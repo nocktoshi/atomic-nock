@@ -17,6 +17,47 @@ import {
 
 const NICKS_PER_NOCK = 65536n;
 
+/** Reuse recent balance RPC results — many UI pollers hit the same first name. */
+const BALANCE_CACHE_TTL_MS = 15_000;
+
+type BalanceRpcResult = Awaited<
+  ReturnType<NockWalletSession["grpc"]["getBalanceByFirstName"]>
+>;
+
+const balanceCache = new Map<string, { result: BalanceRpcResult; at: number }>();
+const balanceInflight = new Map<string, Promise<BalanceRpcResult>>();
+
+function balanceCacheKey(wallet: NockWalletSession, firstName: string): string {
+  return `${wallet.pkh}:${firstName}`;
+}
+
+async function getBalanceByFirstNameCached(
+  wallet: NockWalletSession,
+  firstName: string
+): Promise<BalanceRpcResult> {
+  const key = balanceCacheKey(wallet, firstName);
+  const now = Date.now();
+  const hit = balanceCache.get(key);
+  if (hit && now - hit.at < BALANCE_CACHE_TTL_MS) return hit.result;
+
+  const pending = balanceInflight.get(key);
+  if (pending) return pending;
+
+  const p = wallet.grpc
+    .getBalanceByFirstName(firstName)
+    .then((result) => {
+      balanceCache.set(key, { result, at: Date.now() });
+      balanceInflight.delete(key);
+      return result;
+    })
+    .catch((err) => {
+      balanceInflight.delete(key);
+      throw err;
+    });
+  balanceInflight.set(key, p);
+  return p;
+}
+
 /** gRPC balance row shape (wire protobuf); convert once via `noteFromGrpcBalance`. */
 export type GrpcBalanceEntry = { note?: unknown | null };
 
@@ -171,7 +212,7 @@ export async function fetchCurrentBlockHeight(
   if (!key) return undefined;
   try {
     const firstName = await firstNameFromWalletKey(key);
-    const balance = await wallet.grpc.getBalanceByFirstName(firstName);
+    const balance = await getBalanceByFirstNameCached(wallet, firstName);
     const h = balance?.height?.value;
     if (h == null) return undefined;
     return BigInt(h);
@@ -185,7 +226,7 @@ export async function fetchNotesByFirstName(
   wallet: NockWalletSession,
   firstName: Digest
 ): Promise<{ notes: BalanceEntry[]; height?: string }> {
-  const balance = await wallet.grpc.getBalanceByFirstName(firstName);
+  const balance = await getBalanceByFirstNameCached(wallet, firstName);
   const notes = await parseBalanceEntries(balance?.notes ?? []);
   return { notes, height: balance?.height?.value };
 }
@@ -350,7 +391,7 @@ export async function fetchWalletNotes(
     const firstName = await firstNameFromWalletKey(key);
     tried.push(`firstName:${firstName.slice(0, 12)}…`);
     try {
-      const balance = await wallet.grpc.getBalanceByFirstName(firstName);
+      const balance = await getBalanceByFirstNameCached(wallet, firstName);
       const notes = await parseBalanceEntries(balance?.notes ?? []);
       if (notes.length > 0) {
         console.debug(`Balance: ${notes.length} note(s) via firstName ${firstName.slice(0, 12)}…`);

@@ -11,7 +11,7 @@ import { useSession } from "./session.js";
 import { useLog, LogBox } from "./log.js";
 import { requestSolverRfq, useSolverRfq } from "./useSolverRfq.js";
 import { getSwapRepository } from "../app/repo/swap-repo.js";
-import { copyText, NICKS_PER_NOCK } from "./util.js";
+import { belowMinNock, copyText, minNockAmountError, NICKS_PER_NOCK } from "./util.js";
 import {
   listOneClickAssets,
   assetLabel,
@@ -103,6 +103,13 @@ export function BuyFromAnyChain() {
         return;
       }
       const nock = parseFloat(rfqResult.amountOut);
+      if (belowMinNock(nock)) {
+        log(
+          `USDC received on Base (${usdcStr} USDC), but the quoted NOCK is below the ${minNockAmountError()}`,
+          true
+        );
+        return;
+      }
       const nicks = BigInt(Math.floor(nock * NICKS_PER_NOCK));
       const usdc = parseFloat(usdcStr);
       const created = await repo.createBid({

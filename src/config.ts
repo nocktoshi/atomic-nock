@@ -102,6 +102,10 @@ export const SWAP_SAFETY_MARGIN_SEC = 4 * 3600; // 4h
 /** Refuse to lock USDC into a swap whose USDC refund opens sooner than this. */
 export const MIN_USDC_WINDOW_SEC = 60 * 60; // 1h
 
+/** Minimum NOCK in any swap leg — must cover the on-chain lock/claim fee. */
+export const MIN_NOCK_AMOUNT = 50;
+export const MIN_NOCK_NICKS = BigInt(MIN_NOCK_AMOUNT * 65536);
+
 /** USDC window for SOLVER-facing sell orders. Deliberately SHORT: once the
  *  solver locks USDC, the remaining window is the seller's free option (execute
  *  if NOCK fell, abandon if it pumped) — its value scales with √time, so a 2h

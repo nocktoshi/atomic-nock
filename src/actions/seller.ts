@@ -1,6 +1,12 @@
 import type { Hex, Address } from "viem";
 import { type SwapPublic, generateSwapSecret, computeHashes } from "../swap.js";
-import { type TokenKey, DEFAULT_NOCK_REFUND_DELTA, DEFAULT_USDC_TIMEOUT_SEC } from "../config.js";
+import {
+  type TokenKey,
+  DEFAULT_NOCK_REFUND_DELTA,
+  DEFAULT_USDC_TIMEOUT_SEC,
+  MIN_NOCK_NICKS,
+  MIN_NOCK_AMOUNT,
+} from "../config.js";
 import type { LockNockResult, LockNockPreview } from "../nock/lock.js";
 import { isPlausibleWalletAddress } from "../nock/balance.js";
 import { assertBase58Digest } from "../nock/tx.js";
@@ -82,6 +88,11 @@ export async function generateSwapAction(
   const { hNock, hEvm } = await d.computeHashes(preimageJam);
 
   const gift = BigInt(input.gift);
+  if (gift < MIN_NOCK_NICKS) {
+    throw new Error(
+      `Minimum NOCK amount is ${MIN_NOCK_AMOUNT} NOCK (to cover on-chain fees).`
+    );
+  }
   const refundHeight = input.refundHeight ? BigInt(input.refundHeight) : 0n;
   if (refundHeight <= 0n) {
     throw new Error(

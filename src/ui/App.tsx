@@ -17,6 +17,7 @@ import { SolverSell } from "./SolverSell.js";
 import { Settings } from "./Settings.js";
 import { SellerWizard } from "./SellerWizard.js";
 import { BuyerWizard } from "./BuyerWizard.js";
+import { MIN_NOCK_AMOUNT } from "../config.js";
 import { NICKS_PER_NOCK } from "./util.js";
 
 function BackToMarket() {
@@ -107,7 +108,7 @@ function SettingsRoute() {
 /** Create a new swap as the seller. Starts from a blank draft swap. */
 function NewSwapRoute() {
   const [swap, setSwap] = useState<DraftSwap>(() => ({
-    nockGift: BigInt(50 * NICKS_PER_NOCK),
+    nockGift: BigInt(MIN_NOCK_AMOUNT * NICKS_PER_NOCK),
     usdcAmount: "1.00",
   }));
   return (

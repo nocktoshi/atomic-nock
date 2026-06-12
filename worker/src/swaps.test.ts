@@ -42,7 +42,7 @@ const baseSwap = {
   hNock: "HN",
   sellerPkh: SELLER,
   usdcTimelock: "1",
-  nockGift: "100",
+  nockGift: "655360",
   nockRefundHeight: "1",
   sellerEth: "0xseller",
   usdcAmount: "1",

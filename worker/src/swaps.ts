@@ -118,6 +118,8 @@ async function writeSwap(env: Env, rec: SwapRecord): Promise<void> {
   await Promise.all(idx.map((k) => env.SWAPS.put(k, key, opts)));
 }
 
+const MIN_NOCK_NICKS = 10n * 65536n;
+
 const REQUIRED_AT_CREATE = [
   "hEvm",
   "hNock",
@@ -157,6 +159,9 @@ export async function createSwap(
   }
   if (await loadSwap(env, swap.hEvm)) {
     throw new SwapError(409, "swap already exists");
+  }
+  if (!/^\d{1,24}$/.test(String(swap.nockGift)) || BigInt(String(swap.nockGift)) < MIN_NOCK_NICKS) {
+    throw new SwapError(400, "nockGift must be at least 10 NOCK (to cover on-chain fees)");
   }
 
   const rec: SwapRecord = {

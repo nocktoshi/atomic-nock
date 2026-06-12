@@ -16,7 +16,8 @@ import { createPriceProvider } from "../market/price.js";
 import { useSession } from "./session.js";
 import type { LogApi } from "./log.js";
 import { TokenIcon, type IconToken } from "./TokenIcon.js";
-import { nockToNicks } from "./util.js";
+import { belowMinNock, minNockAmountError, nockToNicks } from "./util.js";
+import { MIN_NOCK_AMOUNT } from "../config.js";
 
 const price = createPriceProvider();
 
@@ -160,8 +161,8 @@ export function SwapBox({
     try {
       if (!nock) throw new Error("Connect Iris (Nockchain wallet).");
       if (!evm) throw new Error("Connect a Base wallet.");
-      if (!Number.isFinite(nockNum) || nockNum < 50) {
-        throw new Error("Minimum NOCK amount is 50 NOCK.");
+      if (belowMinNock(nockNum)) {
+        throw new Error(minNockAmountError());
       }
       if (!Number.isFinite(quoteNum) || quoteNum < minQuote(quoteToken)) {
         throw new Error(
@@ -233,7 +234,7 @@ export function SwapBox({
           <input
             className="swap-amount"
             type="number"
-            min={isNock ? "50" : String(minQuote(token as TokenKey))}
+            min={isNock ? String(MIN_NOCK_AMOUNT) : String(minQuote(token as TokenKey))}
             placeholder="0"
             value={isNock ? nockAmount : quoteAmount}
             onChange={(e) =>

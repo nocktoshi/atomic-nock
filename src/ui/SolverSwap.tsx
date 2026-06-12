@@ -19,11 +19,13 @@ import { useSolverRfq } from "./useSolverRfq.js";
 import { getSwapRepository } from "../app/repo/swap-repo.js";
 import { lockUsdcAction, resolvePreimage, refundUsdcAction } from "../actions/buyer.js";
 import { verifyNockLockConfirmed, fetchCurrentBlockHeight } from "../nock/balance.js";
-import { NICKS_PER_NOCK, nicksToNock, short } from "./util.js";
+import { belowMinNock, minNockAmountError, NICKS_PER_NOCK, nicksToNock, short } from "./util.js";
 import { TxLink } from "./TxLink.js";
 import { TokenIcon } from "./TokenIcon.js";
 
 const LS_KEY = "auto-swap-buy";
+const SWAP_POLL_MS = 12_000;
+const HEIGHT_POLL_MS = 15_000;
 
 type Stage =
   | "input"
@@ -121,6 +123,8 @@ export function SolverSwap() {
   const claimNetRef = useRef<{ received: bigint; fee: bigint } | null>(null);
   // Mirror of `stage` for the poller (whose effect deps exclude stage).
   const stageRef = useRef<Stage>("input");
+  const swapPollInFlight = useRef(false);
+  const heightPollInFlight = useRef(false);
 
   useEffect(() => {
     stageRef.current = stage;
@@ -142,6 +146,7 @@ export function SolverSwap() {
   const amtUsd = parseFloat(usd);
   const overMax =
     maxUsd != null && Number.isFinite(amtUsd) && amtUsd > maxUsd;
+  const underMin = estNock != null && belowMinNock(estNock);
 
   function persist(next: Saved | null): void {
     if (next) localStorage.setItem(LS_KEY, JSON.stringify(next));
@@ -155,8 +160,10 @@ export function SolverSwap() {
     let alive = true;
 
     const poll = async () => {
+      if (swapPollInFlight.current) return;
       if (actionInFlight.current) return; // don't fight an in-flight wallet step
       if (stageRef.current === "confirming-claim") return; // local block-confirm owns this
+      swapPollInFlight.current = true;
       try {
         setNowSec(Math.floor(Date.now() / 1000));
 
@@ -220,11 +227,13 @@ export function SolverSwap() {
         setStage("waiting-fill");
       } catch {
         /* transient — next poll */
+      } finally {
+        swapPollInFlight.current = false;
       }
     };
 
     void poll();
-    const t = window.setInterval(() => void poll(), 7000);
+    const t = window.setInterval(() => void poll(), SWAP_POLL_MS);
     return () => {
       alive = false;
       window.clearInterval(t);
@@ -261,30 +270,36 @@ export function SolverSwap() {
     if (!nock || !waitingOnBlock) return;
     let alive = true;
     const tick = async () => {
-      const h = await fetchCurrentBlockHeight(nock).catch(() => undefined);
-      if (!alive || h == null) return;
-      const hn = Number(h);
-      setHeight(hn);
-      if (blockSeenRef.current.h !== hn) blockSeenRef.current = { h: hn, at: Date.now() };
-      // Claim confirms once a block mines after the claim was accepted.
-      if (
-        stageRef.current === "confirming-claim" &&
-        claimHeightRef.current > 0 &&
-        hn > claimHeightRef.current
-      ) {
-        setStage("done");
-        persist(null);
-        const got = claimNetRef.current?.received;
-        log(
-          got != null
-            ? `🎉 ${nicksToNock(got)} NOCK landed in your wallet.`
-            : "🎉 NOCK received.",
-          true
-        );
+      if (heightPollInFlight.current) return;
+      heightPollInFlight.current = true;
+      try {
+        const h = await fetchCurrentBlockHeight(nock).catch(() => undefined);
+        if (!alive || h == null) return;
+        const hn = Number(h);
+        setHeight(hn);
+        if (blockSeenRef.current.h !== hn) blockSeenRef.current = { h: hn, at: Date.now() };
+        // Claim confirms once a block mines after the claim was accepted.
+        if (
+          stageRef.current === "confirming-claim" &&
+          claimHeightRef.current > 0 &&
+          hn > claimHeightRef.current
+        ) {
+          setStage("done");
+          persist(null);
+          const got = claimNetRef.current?.received;
+          log(
+            got != null
+              ? `🎉 ${nicksToNock(got)} NOCK landed in your wallet.`
+              : "🎉 NOCK received.",
+            true
+          );
+        }
+      } finally {
+        heightPollInFlight.current = false;
       }
     };
     void tick();
-    const t = window.setInterval(() => void tick(), 8000);
+    const t = window.setInterval(() => void tick(), HEIGHT_POLL_MS);
     return () => {
       alive = false;
       window.clearInterval(t);
@@ -312,6 +327,7 @@ export function SolverSwap() {
       }
 
       const nockAmt = parseFloat(rfq.amountOut);
+      if (belowMinNock(nockAmt)) throw new Error(minNockAmountError());
       const nicks = BigInt(Math.floor(nockAmt * NICKS_PER_NOCK));
       const bid = await repo.createBid({
         token: "USDC",
@@ -587,10 +603,15 @@ export function SolverSwap() {
             The solver can only cover ~${maxUsd!.toFixed(2)} right now — try a smaller amount.
           </span>
         )}
+        {underMin && (
+          <span className="addr-resolve-hint swap-warn">{minNockAmountError()}</span>
+        )}
         <button
           type="button"
           className={"swap-submit" + (busy ? " busy" : "")}
-          disabled={busy || rfqLoading || !evm || !nock || !quoteReady || !usd || overMax}
+          disabled={
+            busy || rfqLoading || !evm || !nock || !quoteReady || !usd || overMax || underMin
+          }
           onClick={() => void onSwap()}
         >
           {busy ? "Placing…" : estNock ? `Swap → ~${estNock.toFixed(2)} NOCK` : "Swap"}

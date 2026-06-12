@@ -22,10 +22,13 @@ import { generateSwapAction, withdrawUsdcAction } from "../actions/seller.js";
 import { secretStore } from "../app/storage/secret-store.js";
 import { DEFAULT_NOCK_REFUND_DELTA, SOLVER_ASK_WINDOW_SEC } from "../config.js";
 import { fetchCurrentBlockHeight } from "../nock/balance.js";
-import { NICKS_PER_NOCK, nicksToNock, short } from "./util.js";
+import { belowMinNock, minNockAmountError, NICKS_PER_NOCK, nicksToNock, short } from "./util.js";
+import { MIN_NOCK_AMOUNT } from "../config.js";
 import { TokenIcon } from "./TokenIcon.js";
 
 const LS_KEY = "auto-swap-sell";
+const SWAP_POLL_MS = 12_000;
+const HEIGHT_POLL_MS = 15_000;
 
 type Stage =
   | "input"
@@ -96,6 +99,8 @@ export function SolverSell() {
   const [height, setHeight] = useState<number | null>(null);
   const [blockAgeSec, setBlockAgeSec] = useState(0);
   const blockSeenRef = useRef<{ h: number; at: number }>({ h: 0, at: 0 });
+  const swapPollInFlight = useRef(false);
+  const heightPollInFlight = useRef(false);
 
   // Deep-link: a /sell/:hEvm URL seeds the flow (resume / share).
   useEffect(() => {
@@ -113,6 +118,7 @@ export function SolverSell() {
   const amtNock = parseFloat(nockAmt);
   const overMax =
     maxNock != null && Number.isFinite(amtNock) && amtNock > maxNock;
+  const underMin = belowMinNock(amtNock);
 
   function persist(next: Saved | null): void {
     if (next) localStorage.setItem(LS_KEY, JSON.stringify(next));
@@ -126,7 +132,9 @@ export function SolverSell() {
     let alive = true;
 
     const poll = async () => {
+      if (swapPollInFlight.current) return;
       if (actionInFlight.current) return; // don't fight an in-flight wallet step
+      swapPollInFlight.current = true;
       try {
         // Bypass the repo's long swap cache — the solver's progress lands
         // server-side, so only a fresh read can see it.
@@ -156,11 +164,13 @@ export function SolverSell() {
         setStage("waiting-claim");
       } catch {
         /* transient — next poll */
+      } finally {
+        swapPollInFlight.current = false;
       }
     };
 
     void poll();
-    const t = window.setInterval(() => void poll(), 7000);
+    const t = window.setInterval(() => void poll(), SWAP_POLL_MS);
     return () => {
       alive = false;
       window.clearInterval(t);
@@ -195,14 +205,20 @@ export function SolverSell() {
     if (!nock || !waitingOnBlock) return;
     let alive = true;
     const tick = async () => {
-      const h = await fetchCurrentBlockHeight(nock).catch(() => undefined);
-      if (!alive || h == null) return;
-      const hn = Number(h);
-      setHeight(hn);
-      if (blockSeenRef.current.h !== hn) blockSeenRef.current = { h: hn, at: Date.now() };
+      if (heightPollInFlight.current) return;
+      heightPollInFlight.current = true;
+      try {
+        const h = await fetchCurrentBlockHeight(nock).catch(() => undefined);
+        if (!alive || h == null) return;
+        const hn = Number(h);
+        setHeight(hn);
+        if (blockSeenRef.current.h !== hn) blockSeenRef.current = { h: hn, at: Date.now() };
+      } finally {
+        heightPollInFlight.current = false;
+      }
     };
     void tick();
-    const t = window.setInterval(() => void tick(), 8000);
+    const t = window.setInterval(() => void tick(), HEIGHT_POLL_MS);
     return () => {
       alive = false;
       window.clearInterval(t);
@@ -222,6 +238,7 @@ export function SolverSell() {
       }
       const amt = parseFloat(nockAmt);
       if (!Number.isFinite(amt) || amt <= 0) throw new Error("Enter a NOCK amount.");
+      if (belowMinNock(amt)) throw new Error(minNockAmountError());
       if (maxNock != null && amt > maxNock) {
         throw new Error(
           `The solver can only pay for ~${maxNock.toFixed(2)} NOCK right now — try a smaller amount.`
@@ -453,7 +470,7 @@ export function SolverSell() {
             <input
               className="swap-amount"
               type="number"
-              min="0"
+              min={String(MIN_NOCK_AMOUNT)}
               placeholder="0"
               value={nockAmt}
               onChange={(e) => setNockAmt(e.target.value)}
@@ -498,10 +515,15 @@ export function SolverSell() {
             amount.
           </span>
         )}
+        {underMin && (
+          <span className="addr-resolve-hint swap-warn">{minNockAmountError()}</span>
+        )}
         <button
           type="button"
           className={"swap-submit" + (busy ? " busy" : "")}
-          disabled={busy || rfqLoading || !evm || !nock || !quoteReady || !nockAmt || overMax}
+          disabled={
+            busy || rfqLoading || !evm || !nock || !quoteReady || !nockAmt || overMax || underMin
+          }
           onClick={() => void onSell()}
         >
           {busy ? "Placing…" : estUsd ? `Swap → ~$${estUsd.toFixed(2)} USDC` : "Swap"}

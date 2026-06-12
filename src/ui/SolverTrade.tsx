@@ -12,9 +12,13 @@ import { TokenIcon } from "./TokenIcon.js";
 import { getSwapRepository } from "../app/repo/swap-repo.js";
 import { generateSwapAction } from "../actions/seller.js";
 import { secretStore } from "../app/storage/secret-store.js";
-import { DEFAULT_NOCK_REFUND_DELTA, SOLVER_ASK_WINDOW_SEC } from "../config.js";
+import {
+  DEFAULT_NOCK_REFUND_DELTA,
+  MIN_NOCK_AMOUNT,
+  SOLVER_ASK_WINDOW_SEC,
+} from "../config.js";
 import { fetchCurrentBlockHeight } from "../nock/balance.js";
-import { NICKS_PER_NOCK } from "./util.js";
+import { belowMinNock, minNockAmountError, NICKS_PER_NOCK } from "./util.js";
 
 type Direction = "buy" | "sell";
 
@@ -49,6 +53,10 @@ export function SolverTrade() {
       : null;
   const amtIn = parseFloat(direction === "buy" ? usd : nockAmt);
   const overMax = maxIn != null && Number.isFinite(amtIn) && amtIn > maxIn;
+  const underMin =
+    direction === "sell"
+      ? belowMinNock(parseFloat(nockAmt))
+      : estOut != null && belowMinNock(estOut);
 
   function flip(): void {
     setDirection((d) => (d === "buy" ? "sell" : "buy"));
@@ -75,6 +83,7 @@ export function SolverTrade() {
           );
         }
         const nockOut = parseFloat(rfq.amountOut);
+        if (belowMinNock(nockOut)) throw new Error(minNockAmountError());
         const nicks = BigInt(Math.floor(nockOut * NICKS_PER_NOCK));
         const bid = await repo.createBid({
           token: "USDC",
@@ -96,6 +105,7 @@ export function SolverTrade() {
         if (!evm) throw new Error("Connect a Base wallet (receives the USDC).");
         const amt = parseFloat(nockAmt);
         if (!Number.isFinite(amt) || amt <= 0) throw new Error("Enter a NOCK amount.");
+        if (belowMinNock(amt)) throw new Error(minNockAmountError());
         if (maxIn != null && amt > maxIn) {
           throw new Error(
             `The solver can only pay for ~${maxIn.toFixed(2)} NOCK right now — try a smaller amount.`
@@ -188,7 +198,7 @@ export function SolverTrade() {
               <input
                 className="swap-amount"
                 type="number"
-                min="0"
+                min={String(MIN_NOCK_AMOUNT)}
                 placeholder="0"
                 value={nockAmt}
                 onChange={(e) => setNockAmt(e.target.value)}
@@ -251,6 +261,9 @@ export function SolverTrade() {
         {overMax && overMaxHint && (
           <span className="addr-resolve-hint swap-warn">{overMaxHint}</span>
         )}
+        {underMin && (
+          <span className="addr-resolve-hint swap-warn">{minNockAmountError()}</span>
+        )}
         <button
           type="button"
           className={"swap-submit" + (busy ? " busy" : "")}
@@ -261,7 +274,8 @@ export function SolverTrade() {
             !nock ||
             !quoteReady ||
             !(direction === "buy" ? usd : nockAmt) ||
-            overMax
+            overMax ||
+            underMin
           }
           onClick={() => void onSubmit()}
         >

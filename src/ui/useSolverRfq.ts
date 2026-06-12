@@ -7,7 +7,8 @@ import { useEffect, useRef, useState } from "react";
 import { KV_URL } from "../config.js";
 import type { RfqSide, SolverRfqResponse } from "../market/solver-rfq.js";
 
-const DEBOUNCE_MS = 400;
+/** Wait for typing to settle before posting a sized RFQ. */
+const DEBOUNCE_MS = 700;
 /** Align with solver tick cadence — no point polling faster than the bot responds. */
 const POLL_MS = 4_000;
 const POLL_INITIAL_DELAY_MS = 2_000;
@@ -103,6 +104,7 @@ export function useSolverRfq(side: RfqSide, amountIn: string): SolverRfqState {
   const [quote, setQuote] = useState<SolverRfqResponse | null>(null);
   const [fetching, setFetching] = useState(false);
   const [online, setOnline] = useState<boolean | null>(null);
+  const [debouncedAmount, setDebouncedAmount] = useState("");
   const reqId = useRef(0);
 
   useEffect(() => {
@@ -120,61 +122,72 @@ export function useSolverRfq(side: RfqSide, amountIn: string): SolverRfqState {
     };
   }, []);
 
+  const trimmed = amountIn.trim();
+
+  // Debounce the amount before any RFQ work — typing must not fire requests or
+  // flip the UI into a quoting state on every keystroke.
   useEffect(() => {
-    if (!baseUrl()) return;
-    const trimmed = amountIn.trim();
-    if (!isPositiveAmount(trimmed)) return;
+    if (!isPositiveAmount(trimmed)) {
+      const t = window.setTimeout(() => {
+        setDebouncedAmount("");
+        setQuote(null);
+        setFetching(false);
+      }, 0);
+      return () => window.clearTimeout(t);
+    }
+    const t = window.setTimeout(() => setDebouncedAmount(trimmed), DEBOUNCE_MS);
+    return () => window.clearTimeout(t);
+  }, [trimmed]);
+
+  useEffect(() => {
+    if (!baseUrl() || !debouncedAmount) return;
 
     const id = ++reqId.current;
     const ac = new AbortController();
-    const t = window.setTimeout(() => {
-      void (async () => {
-        setFetching(true);
-        try {
-          const created = await createRfq(side, trimmed);
-          if (reqId.current !== id || ac.signal.aborted) return;
-          setOnline(created.status !== "offline");
-          if (created.status === "offline") {
-            setQuote(created);
-            return;
-          }
-          if (created.status !== "pending" || !created.rfqId) {
-            setQuote(created);
-            return;
-          }
-          const done = await pollRfq(created.rfqId, ac.signal);
-          if (reqId.current !== id || ac.signal.aborted) return;
-          setOnline(done.status !== "offline");
-          setQuote(done);
-        } catch (e) {
-          if (reqId.current !== id || ac.signal.aborted) return;
-          if ((e as Error).name === "AbortError") return;
-          setQuote({
-            rfqId: "",
-            side,
-            status: "offline",
-            expiresAt: Date.now(),
-            reason: (e as Error).message,
-          });
-        } finally {
-          if (reqId.current === id) setFetching(false);
+    void (async () => {
+      setFetching(true);
+      try {
+        const created = await createRfq(side, debouncedAmount);
+        if (reqId.current !== id || ac.signal.aborted) return;
+        setOnline(created.status !== "offline");
+        if (created.status === "offline") {
+          setQuote(created);
+          return;
         }
-      })();
-    }, DEBOUNCE_MS);
+        if (created.status !== "pending" || !created.rfqId) {
+          setQuote(created);
+          return;
+        }
+        const done = await pollRfq(created.rfqId, ac.signal);
+        if (reqId.current !== id || ac.signal.aborted) return;
+        setOnline(done.status !== "offline");
+        setQuote(done);
+      } catch (e) {
+        if (reqId.current !== id || ac.signal.aborted) return;
+        if ((e as Error).name === "AbortError") return;
+        setQuote({
+          rfqId: "",
+          side,
+          status: "offline",
+          expiresAt: Date.now(),
+          reason: (e as Error).message,
+        });
+      } finally {
+        if (reqId.current === id) setFetching(false);
+      }
+    })();
 
     return () => {
       ac.abort();
-      window.clearTimeout(t);
     };
-  }, [side, amountIn]);
+  }, [side, debouncedAmount]);
 
-  const trimmed = amountIn.trim();
   const hasAmount = isPositiveAmount(trimmed);
   const settled = quote != null && quote.status !== "pending";
   const amountMatches = !quote?.amountIn || quote.amountIn === trimmed;
   const sideMatches = quote?.side === side;
   const showQuote = settled && amountMatches && sideMatches;
-  const loading = hasAmount && (fetching || !showQuote);
+  const loading = hasAmount && fetching;
 
   return {
     quote: hasAmount && showQuote ? quote : null,

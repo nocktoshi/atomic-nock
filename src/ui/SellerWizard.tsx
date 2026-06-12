@@ -23,8 +23,10 @@ import { AddressField } from "./AddressField.js";
 import { SwapShare } from "./SwapCard.js";
 import { SwapWalletBanner, useSwapWalletStatus } from "./SwapWalletGate.js";
 import {
+  belowMinNock,
   copyText,
   swapUrl,
+  minNockAmountError,
   nicksToNock,
   nockToNicks,
   quoteDisplay,
@@ -90,7 +92,7 @@ function GenerateBody({ swap, setSwap }: SellerCtx) {
             <input
               className="swap-amount"
               type="number"
-              min="50"
+              min="10"
               placeholder="0"
               value={nicksToNock(swap?.nockGift)}
               onChange={(e) => patch(setSwap, { nockGift: nockToNicks(e.target.value) })}
@@ -314,8 +316,8 @@ const steps: WizardStep<SellerCtx>[] = [
     async onNext({ swap, setSwap, evm, repo, log, nock }) {
       const nockAmount =
         swap?.nockGift != null ? Number(swap.nockGift) / NICKS_PER_NOCK : NaN;
-      if (!Number.isFinite(nockAmount) || nockAmount < 50) {
-        throw new Error("Minimum NOCK amount is 50 NOCK.");
+      if (belowMinNock(nockAmount)) {
+        throw new Error(minNockAmountError());
       }
       const quote = quoteDisplay(swap);
       const quoteAmount = parseFloat(swap?.usdcAmount ?? "");

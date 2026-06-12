@@ -57,6 +57,7 @@ describe("createBid", () => {
     [{ ...goodBid, quoteAmount: "-5" }, /quoteAmount/],
     [{ ...goodBid, quoteAmount: "0" }, /quoteAmount/],
     [{ ...goodBid, nockGift: "1.5" }, /nockGift/],
+    [{ ...goodBid, nockGift: "65536" }, /10 NOCK/],
     [{ ...goodBid, creatorEth: "nope" }, /creatorEth/],
   ])("rejects invalid input %#", async (body, err) => {
     await expect(createBid(fakeEnv(), body, BIDDER)).rejects.toThrow(err);

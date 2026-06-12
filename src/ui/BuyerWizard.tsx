@@ -369,7 +369,10 @@ export function BuyerWizard({
     const id = swap?.hEvm;
     if (!id) return;
     let alive = true;
+    let tickInFlight = false;
     const tick = async () => {
+      if (tickInFlight) return;
+      tickInFlight = true;
       try {
         const fresh = await repo.get(id, { maxAgeMs: 5000 });
         if (!alive || !fresh) return;
@@ -403,10 +406,12 @@ export function BuyerWizard({
         // else: transient (note not on-chain yet, height unreadable) → keep polling.
       } catch {
         /* transient — keep polling */
+      } finally {
+        tickInFlight = false;
       }
     };
     void tick();
-    const t = setInterval(() => void tick(), 6000);
+    const t = setInterval(() => void tick(), 12_000);
     return () => {
       alive = false;
       clearInterval(t);

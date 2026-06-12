@@ -1,9 +1,17 @@
 /** Shared display helpers and small hooks for the React UI. */
 import { useEffect, useState } from "react";
-import { tokenInfo } from "../config.js";
+import { MIN_NOCK_AMOUNT, tokenInfo } from "../config.js";
 import { reverseResolveNock } from "./name-resolve.js";
 
 export const NICKS_PER_NOCK = 65536;
+
+export function minNockAmountError(): string {
+  return `Minimum NOCK amount is ${MIN_NOCK_AMOUNT} NOCK (to cover on-chain fees).`;
+}
+
+export function belowMinNock(nock: number): boolean {
+  return !Number.isFinite(nock) || nock < MIN_NOCK_AMOUNT;
+}
 
 /** Abbreviate a long id/address as `head…tail`. */
 export function short(s: string | undefined, head = 8, tail = 6): string {

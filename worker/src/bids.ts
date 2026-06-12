@@ -71,6 +71,8 @@ function isPositiveInt(v: unknown): v is string {
   return typeof v === "string" && /^\d{1,24}$/.test(v) && v !== "0".repeat(v.length);
 }
 
+const MIN_NOCK_NICKS = 10n * 65536n;
+
 /**
  * Create a bid. The session pkh becomes creatorPkh (you receive the NOCK you're
  * buying, so the bid is bound to your signed-in Nockchain wallet).
@@ -88,6 +90,9 @@ export async function createBid(
   }
   if (!isPositiveInt(body.nockGift)) {
     throw new SwapError(400, "nockGift must be a positive integer string (nicks)");
+  }
+  if (BigInt(body.nockGift) < MIN_NOCK_NICKS) {
+    throw new SwapError(400, "nockGift must be at least 10 NOCK (to cover on-chain fees)");
   }
   if (typeof body.creatorEth !== "string" || !/^0x[0-9a-fA-F]{40}$/.test(body.creatorEth)) {
     throw new SwapError(400, "creatorEth must be a Base address");
