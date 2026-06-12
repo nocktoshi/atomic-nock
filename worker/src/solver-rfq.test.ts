@@ -7,28 +7,44 @@ import {
   listPendingRfqs,
   respondRfq,
   touchHeartbeat,
-  HEARTBEAT_KEY,
 } from "./solver-rfq.js";
+import { RfqBoard, type BoardStorage } from "./rfq-board.js";
 
-function fakeEnv(): Env & { store: Map<string, string> } {
-  const store = new Map<string, string>();
-  const SWAPS = {
-    get: async (k: string) => store.get(k) ?? null,
-    put: async (k: string, v: string) => void store.set(k, v),
-    delete: async (k: string) => void store.delete(k),
-    list: async ({ prefix = "", limit = 1000 }: { prefix?: string; limit?: number } = {}) => {
-      const keys = [...store.keys()]
-        .filter((k) => k.startsWith(prefix))
-        .sort()
-        .slice(0, limit)
-        .map((name) => ({ name }));
-      return { keys, list_complete: true, cursor: "" };
+/** Map-backed BoardStorage — the DO's whole storage contract, no miniflare. */
+function fakeBoardStorage(): BoardStorage & { raw: Map<string, unknown> } {
+  const raw = new Map<string, unknown>();
+  return {
+    raw,
+    async get<T>(key: string) {
+      return raw.get(key) as T | undefined;
+    },
+    async put<T>(key: string, value: T) {
+      raw.set(key, value);
+    },
+    async delete(key: string) {
+      return raw.delete(key);
+    },
+    async list<T>({ prefix }: { prefix: string }) {
+      const out = new Map<string, T>();
+      for (const [k, v] of raw) if (k.startsWith(prefix)) out.set(k, v as T);
+      return out;
     },
   };
-  return { SWAPS, store } as unknown as Env & { store: Map<string, string> };
 }
 
-describe("solver-rfq", () => {
+/** Env whose RFQ_DO namespace routes straight into a real RfqBoard instance. */
+function fakeEnv(): Env & { boardRaw: Map<string, unknown> } {
+  const storage = fakeBoardStorage();
+  const boardInstance = new RfqBoard({ storage });
+  const stub = { fetch: (url: string, init?: RequestInit) => boardInstance.fetch(new Request(url, init)) };
+  const RFQ_DO = {
+    idFromName: (_: string) => "board-id",
+    get: (_: unknown) => stub,
+  };
+  return { RFQ_DO, boardRaw: storage.raw } as unknown as Env & { boardRaw: Map<string, unknown> };
+}
+
+describe("solver-rfq (Durable Object board)", () => {
   let env: ReturnType<typeof fakeEnv>;
 
   beforeEach(() => {
@@ -58,6 +74,14 @@ describe("solver-rfq", () => {
     expect(pending[0].id).toBe(rfq.rfqId);
   });
 
+  it("a fresh RFQ is visible to the pending poll IMMEDIATELY (the KV-list lag bug)", async () => {
+    await touchHeartbeat(env, "SOLVER");
+    const a = await createRfq(env, { side: "buy", amountIn: "1" });
+    const b = await createRfq(env, { side: "sell", amountIn: "2" });
+    const pending = await listPendingRfqs(env);
+    expect(pending.map((r) => r.id)).toEqual([a.rfqId, b.rfqId]); // ordered, instant
+  });
+
   it("responds to RFQ with public fields only", async () => {
     await touchHeartbeat(env, "SOLVER");
     const created = await createRfq(env, { side: "sell", amountIn: "100" });
@@ -79,7 +103,7 @@ describe("solver-rfq", () => {
   it("keeps pending RFQ pending while awaiting solver (no mid-poll offline flip)", async () => {
     await touchHeartbeat(env, "SOLVER");
     const created = await createRfq(env, { side: "buy", amountIn: "10" });
-    env.store.delete(HEARTBEAT_KEY);
+    env.boardRaw.delete("heartbeat");
     const fetched = await getRfq(env, created.rfqId);
     expect(fetched?.status).toBe("pending");
   });
@@ -99,5 +123,24 @@ describe("solver-rfq", () => {
   it("rejects invalid amount", async () => {
     await touchHeartbeat(env, "SOLVER");
     await expect(createRfq(env, { side: "buy", amountIn: "-1" })).rejects.toThrow(/amountIn/);
+  });
+
+  it("refuses to answer an already-answered RFQ", async () => {
+    await touchHeartbeat(env, "SOLVER");
+    const created = await createRfq(env, { side: "buy", amountIn: "10" });
+    await respondRfq(env, created.rfqId, "SOLVER", { status: "rejected", reason: "max 5" });
+    await expect(
+      respondRfq(env, created.rfqId, "SOLVER", { status: "ready", amountOut: "1" })
+    ).rejects.toThrow(/already answered/);
+  });
+
+  it("expires an unanswered RFQ after its TTL", async () => {
+    await touchHeartbeat(env, "SOLVER");
+    const created = await createRfq(env, { side: "buy", amountIn: "10" });
+    vi.advanceTimersByTime(56_000);
+    const fetched = await getRfq(env, created.rfqId);
+    expect(fetched?.status).toBe("expired");
+    await touchHeartbeat(env, "SOLVER");
+    expect(await listPendingRfqs(env)).toHaveLength(0);
   });
 });

@@ -42,6 +42,19 @@ name = "RL_AUTH"
 namespace_id = "1003"
 simple = { limit = 10, period = 60 }
 
+[[ratelimits]]
+name = "RL_SOLVER"
+namespace_id = "1004"
+simple = { limit = 600, period = 60 }
+
+[[durable_objects.bindings]]
+name = "RFQ_DO"
+class_name = "RfqBoard"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["RfqBoard"]
+
 # Bundle the rose-wasm verifier as a CompiledWasm module (server-side signature
 # verification). NOTE: the wasm is ~1MB gzipped — requires the Workers *Paid*
 # plan (10MB compressed limit; the free tier is 1MB).

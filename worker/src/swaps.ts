@@ -24,6 +24,13 @@ export interface Env {
   RL_READ?: RateLimiter;
   RL_WRITE?: RateLimiter;
   RL_AUTH?: RateLimiter;
+  /** Per-pkh budget for the AUTHENTICATED solver's polling — without it the
+   *  bot's reads exhaust the anonymous per-IP bucket and starve browsers
+   *  (locally they even share 127.0.0.1, stalling RFQs). */
+  RL_SOLVER?: RateLimiter;
+  /** RfqBoard Durable Object — the strongly-consistent live RFQ queue (KV
+   *  list() lags new keys by up to ~60s, which stranded fresh RFQs). */
+  RFQ_DO?: DurableObjectNamespace;
   /** Telegram notifications (secrets via `wrangler secret put`). */
   TELEGRAM_BOT_TOKEN?: string;
   TELEGRAM_WEBHOOK_SECRET?: string;

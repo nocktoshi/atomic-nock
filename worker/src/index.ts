@@ -107,6 +107,9 @@ import type {
   LoginBody,
 } from "./contract.js";
 
+// Durable Object class must be exported from the worker entry module.
+export { RfqBoard } from "./rfq-board.js";
+
 const CORS: Record<string, string> = {
   "access-control-allow-origin": "*",
   "access-control-allow-methods": "GET,POST,OPTIONS",
@@ -149,6 +152,25 @@ async function requireSolverSession(req: Request, env: Env): Promise<string> {
   const pkh = await requireSession(req, env);
   if (!allowedSolver(env, pkh)) throw new SwapError(403, "not an authorized solver pkh");
   return pkh;
+}
+
+/**
+ * Rate-limit a read. The authenticated solver gets its own per-pkh budget
+ * (RL_SOLVER): its polling — heartbeat, pending RFQs, feed, every in-flight
+ * swap each tick — would otherwise exhaust the anonymous per-IP bucket and
+ * starve browser reads (locally both are 127.0.0.1, which stalled RFQs at
+ * "pending" while listPendingRfqs 429'd). Anonymous reads keep RL_READ by IP.
+ */
+async function enforceReadRate(req: Request, env: Env): Promise<void> {
+  const token = bearer(req);
+  if (token && env.SESSION_SECRET) {
+    const pkh = await verifyToken(token, env.SESSION_SECRET).catch(() => null);
+    if (pkh && allowedSolver(env, pkh)) {
+      await enforceRate(env.RL_SOLVER ?? env.RL_READ, `solver:${pkh}`);
+      return;
+    }
+  }
+  await enforceRate(env.RL_READ, clientIp(req));
 }
 
 export default {
@@ -426,7 +448,7 @@ export default {
 
       // --- marketplace feed (cached) ------------------------------------------
       if (path === "/feed" && req.method === "GET") {
-        await enforceRate(env.RL_READ, clientIp(req));
+        await enforceReadRate(req, env);
         const limit = Number(url.searchParams.get("limit") ?? "50");
         const feed = await getMarketFeed(env, limit);
         return json(feed);
@@ -444,7 +466,7 @@ export default {
       }
       if (path === "/solver/rfq/pending" && req.method === "GET") {
         await requireSolverSession(req, env);
-        await enforceRate(env.RL_READ, clientIp(req));
+        await enforceReadRate(req, env);
         const rfqs = await listPendingRfqs(env);
         return json({ rfqs });
       }
@@ -463,7 +485,7 @@ export default {
         if (body.status !== "ready" && body.status !== "rejected") {
           throw new SwapError(400, "status must be ready or rejected");
         }
-        return json(await respondRfq(env, id, pkh, body));
+        return json(await respondRfq(env, id, pkh, { ...body, status: body.status }));
       }
       const rfqGetMatch = path.match(/^\/solver\/rfq\/([^/]+)$/);
       if (rfqGetMatch && req.method === "GET") {
@@ -483,7 +505,7 @@ export default {
       // --- solver state persistence (RAM cache on bot; KV is durable store) ----
       if (path === "/solver/state/swaps" && req.method === "GET") {
         const pkh = await requireSolverSession(req, env);
-        await enforceRate(env.RL_READ, clientIp(req));
+        await enforceReadRate(req, env);
         return json({ swaps: await listTrackedSwaps(env, pkh) });
       }
 
@@ -501,7 +523,7 @@ export default {
       const solverSwapMatch = path.match(/^\/solver\/state\/swaps\/([^/]+)$/);
       if (solverSwapMatch && req.method === "GET") {
         const pkh = await requireSolverSession(req, env);
-        await enforceRate(env.RL_READ, clientIp(req));
+        await enforceReadRate(req, env);
         const hEvm = decodeURIComponent(solverSwapMatch[1]);
         const swap = await loadTrackedSwap(env, pkh, hEvm);
         if (!swap) return json({ error: "not found" }, 404);
@@ -528,7 +550,7 @@ export default {
 
       if (path === "/solver/state/pnl" && req.method === "GET") {
         const pkh = await requireSolverSession(req, env);
-        await enforceRate(env.RL_READ, clientIp(req));
+        await enforceReadRate(req, env);
         return json({ pnl: await listPnl(env, pkh) });
       }
       if (path === "/solver/state/pnl" && req.method === "POST") {
@@ -540,13 +562,13 @@ export default {
       }
       if (path === "/solver/state/pnl/summary" && req.method === "GET") {
         const pkh = await requireSolverSession(req, env);
-        await enforceRate(env.RL_READ, clientIp(req));
+        await enforceReadRate(req, env);
         return json(pnlSummary(await listPnl(env, pkh)));
       }
 
       const bidGetMatch = path.match(/^\/bid\/([^/]+)$/);
       if (bidGetMatch && req.method === "GET") {
-        await enforceRate(env.RL_READ, clientIp(req));
+        await enforceReadRate(req, env);
         // An open bid returns the record; a filled one returns { filledHEvm }
         // so the creator's bid page can follow it to the swap.
         const bid = await lookupBid(env, decodeURIComponent(bidGetMatch[1]));
@@ -556,7 +578,7 @@ export default {
 
       const getMatch = path.match(/^\/swap\/([^/]+)$/);
       if (getMatch && req.method === "GET") {
-        await enforceRate(env.RL_READ, clientIp(req));
+        await enforceReadRate(req, env);
         const rec = await loadSwap(env, decodeURIComponent(getMatch[1]));
         if (!rec) return json({ error: "not found" }, 404);
         return json(rec);
@@ -567,7 +589,7 @@ export default {
         // participant is indexed by their nock pkh, so `idx:nock:<your pkh>:`
         // covers every swap you're part of — and nothing else is listable.
         const pkh = await requireSession(req, env);
-        await enforceRate(env.RL_READ, clientIp(req));
+        await enforceReadRate(req, env);
         const prefix = url.searchParams.get("prefix") ?? "";
         if (prefix !== `idx:nock:${pkh}:`) {
           return json({ error: "may only list your own swaps" }, 403);
