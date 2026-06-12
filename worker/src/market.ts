@@ -14,7 +14,7 @@
  *
  * The class keeps the RfqBoard seam: a minimal `MarketStorage` interface so
  * unit tests run against a Map-backed fake without miniflare. Operations are
- * public methods; `fetch()` is a thin internal router used by the worker.
+ * public RPC methods; the worker calls them via `stub.method()` (see market-do.ts).
  * KV remains ONLY for user-scoped, latency-insensitive data (profiles,
  * telegram links, email codes, push subscriptions).
  */
@@ -161,11 +161,11 @@ const nowSec = () => Math.floor(Date.now() / 1000);
 
 // ── The Durable Object ────────────────────────────────────────────────────────
 
-export class Market {
+export class MarketCore {
   private readonly storage: MarketStorage;
 
-  constructor(state: { storage: MarketStorage }) {
-    this.storage = state.storage;
+  constructor(storage: MarketStorage) {
+    this.storage = storage;
   }
 
   // ── Swaps (state machine moved IN — load→validate→write is atomic here) ────
@@ -429,6 +429,8 @@ export class Market {
   // ── Feed (always fresh — replaces the KV snapshot + invalidation machinery) ─
 
   async feed(limit = 50): Promise<{ swaps: SwapRecord[]; bids: BidRecord[]; ts: number }> {
+    // Opportunistic aging (~1% of feed reads; replaces the old router hook).
+    if (Math.random() < 0.01) await this.sweep();
     const [swaps, bids] = await Promise.all([this.listOpenSwaps(limit), this.listBids(limit)]);
     return { swaps, bids, ts: Date.now() };
   }
@@ -627,153 +629,4 @@ export class Market {
     return counts;
   }
 
-  // ── Internal router (called only by our worker) ─────────────────────────────
-
-  async fetch(req: Request): Promise<Response> {
-    const url = new URL(req.url);
-    const path = url.pathname;
-    const q = (name: string) => url.searchParams.get(name) ?? "";
-    try {
-      const body = req.method === "POST" || req.method === "PUT" || req.method === "PATCH"
-        ? ((await req.json().catch(() => ({}))) as Record<string, unknown>)
-        : {};
-
-      // Swaps
-      if (path === "/swap/get") {
-        const rec = await this.loadSwap(q("hEvm"));
-        return rec ? Response.json(rec) : Response.json({ error: "not found" }, { status: 404 });
-      }
-      if (path === "/swap/create") {
-        return Response.json(
-          await this.createSwap(body.swap as Record<string, unknown>, String(body.sessionPkh))
-        );
-      }
-      if (path === "/swap/claim") {
-        return Response.json(
-          await this.claimSwap(String(body.hEvm), String(body.buyerEth), String(body.sessionPkh))
-        );
-      }
-      if (path === "/swap/advance") {
-        return Response.json(
-          await this.advanceSwap(
-            String(body.hEvm),
-            body.fields as Record<string, unknown>,
-            String(body.sessionPkh),
-            body.expectedVersion as number | undefined
-          )
-        );
-      }
-      if (path === "/swap/cancel") {
-        await this.cancelSwap(String(body.hEvm), String(body.sessionPkh));
-        return Response.json({ ok: true });
-      }
-      if (path === "/swap/mine") {
-        return Response.json({ ids: await this.listMine(q("pkh")) });
-      }
-
-      // Bids
-      if (path === "/bid/get") {
-        const rec = await this.lookupBid(q("id"));
-        return rec ? Response.json(rec) : Response.json({ error: "not found" }, { status: 404 });
-      }
-      if (path === "/bid/create") {
-        return Response.json(
-          await this.createBid(body.bid as Record<string, unknown>, String(body.sessionPkh))
-        );
-      }
-      if (path === "/bid/cancel") {
-        await this.cancelBid(String(body.id), String(body.sessionPkh));
-        return Response.json({ ok: true });
-      }
-      if (path === "/bid/fill") {
-        return Response.json(
-          await this.fillBid(String(body.id), body.swap as Record<string, unknown>, String(body.sessionPkh))
-        );
-      }
-
-      // Feed
-      if (path === "/feed") {
-        const feed = await this.feed(Number(q("limit")) || 50);
-        // Cheap opportunistic aging (replaces KV TTLs); ~1% of feed reads.
-        if (Math.random() < 0.01) await this.sweep();
-        return Response.json(feed);
-      }
-
-      // Solver state
-      if (path === "/state/swaps") {
-        return Response.json({ swaps: await this.listTrackedSwaps(q("pkh")) });
-      }
-      if (path === "/state/swap" && req.method === "GET") {
-        const rec = await this.loadTrackedSwap(q("pkh"), q("hEvm"));
-        return rec ? Response.json(rec) : Response.json({ error: "not found" }, { status: 404 });
-      }
-      if (path === "/state/swap" && req.method === "PUT") {
-        return Response.json(
-          await this.upsertTrackedSwap(String(body.pkh), body.swap as TrackedSwap)
-        );
-      }
-      if (path === "/state/swap" && req.method === "PATCH") {
-        return Response.json(
-          await this.patchTrackedSwap(String(body.pkh), String(body.hEvm), body.patch as TrackedSwapPatch)
-        );
-      }
-      if (path === "/state/secret" && req.method === "PUT") {
-        return Response.json(
-          await this.putSwapSecret(String(body.pkh), String(body.hEvm), String(body.secretHex))
-        );
-      }
-      if (path === "/state/pnl" && req.method === "GET") {
-        return Response.json({ pnl: await this.listPnl(q("pkh")) });
-      }
-      if (path === "/state/pnl" && req.method === "POST") {
-        await this.appendPnl(String(body.pkh), body.entry as PnlEntry);
-        return Response.json({ ok: true });
-      }
-
-      // RFQ + heartbeat (legacy RfqBoard paths, unchanged for the proxy)
-      if (path === "/heartbeat" && req.method === "POST") {
-        await this.touchHeartbeat(String(body.pkh ?? ""));
-        return Response.json({ ok: true });
-      }
-      if (path === "/status") {
-        return Response.json({ online: await this.online() });
-      }
-      if (path === "/create" && req.method === "POST") {
-        const rec = await this.createRfqRecord(body.side as RfqSide, String(body.amountIn));
-        if (!rec) return Response.json({ error: "offline" }, { status: 503 });
-        return Response.json(rec);
-      }
-      if (path === "/pending") {
-        return Response.json({ rfqs: await this.listPendingRfqs() });
-      }
-      if (path === "/respond" && req.method === "POST") {
-        const { id: rfqId, pkh, ...rest } = body as {
-          id: string;
-          pkh: string;
-          status: "ready" | "rejected";
-          amountOut?: string;
-          pricePerNock?: number;
-          maxAmountIn?: string;
-          reason?: string;
-        };
-        return Response.json(await this.respondRfq(rfqId, pkh, rest));
-      }
-      if (path === "/get") {
-        const rec = await this.getRfqRecord(q("id"));
-        return rec ? Response.json(rec) : Response.json({ error: "not found" }, { status: 404 });
-      }
-
-      // Migration
-      if (path === "/admin/import" && req.method === "POST") {
-        return Response.json(await this.importData(body as ImportPayload));
-      }
-
-      return Response.json({ error: "bad market route" }, { status: 404 });
-    } catch (e) {
-      if (e instanceof SwapError) {
-        return Response.json({ error: e.message }, { status: e.status });
-      }
-      return Response.json({ error: (e as Error).message }, { status: 500 });
-    }
-  }
 }

@@ -7,18 +7,14 @@
  */
 import type { PnlEntry, TrackedSwap, TrackedSwapPatch } from "../../src/solver-state.js";
 import { type Env } from "./swaps.js";
-import { callMarket, callMarketOrNull, postJson } from "./market-client.js";
+import { withMarket } from "./market-client.js";
 
 export function openExposureUsd(swaps: TrackedSwap[]): number {
   return swaps.filter((s) => !s.done).reduce((sum, s) => sum + (s.quoteUsd ?? 0), 0);
 }
 
 export async function listTrackedSwaps(env: Env, pkh: string): Promise<TrackedSwap[]> {
-  const { swaps } = await callMarket<{ swaps: TrackedSwap[] }>(
-    env,
-    `/state/swaps?pkh=${encodeURIComponent(pkh)}`
-  );
-  return swaps;
+  return withMarket(env, (stub) => stub.listTrackedSwaps(pkh));
 }
 
 export async function loadTrackedSwap(
@@ -26,10 +22,7 @@ export async function loadTrackedSwap(
   pkh: string,
   hEvm: string
 ): Promise<TrackedSwap | null> {
-  return callMarketOrNull<TrackedSwap>(
-    env,
-    `/state/swap?pkh=${encodeURIComponent(pkh)}&hEvm=${encodeURIComponent(hEvm)}`
-  );
+  return withMarket(env, (stub) => stub.loadTrackedSwap(pkh, hEvm));
 }
 
 export async function upsertTrackedSwap(
@@ -37,10 +30,7 @@ export async function upsertTrackedSwap(
   pkh: string,
   swap: TrackedSwap
 ): Promise<TrackedSwap> {
-  return callMarket<TrackedSwap>(env, "/state/swap", {
-    ...postJson({ pkh, swap }),
-    method: "PUT",
-  });
+  return withMarket(env, (stub) => stub.upsertTrackedSwap(pkh, swap));
 }
 
 export async function patchTrackedSwap(
@@ -49,10 +39,7 @@ export async function patchTrackedSwap(
   hEvm: string,
   patch: TrackedSwapPatch
 ): Promise<TrackedSwap> {
-  return callMarket<TrackedSwap>(env, "/state/swap", {
-    ...postJson({ pkh, hEvm, patch }),
-    method: "PATCH",
-  });
+  return withMarket(env, (stub) => stub.patchTrackedSwap(pkh, hEvm, patch));
 }
 
 export async function putSwapSecret(
@@ -61,22 +48,15 @@ export async function putSwapSecret(
   hEvm: string,
   secretHex: string
 ): Promise<TrackedSwap> {
-  return callMarket<TrackedSwap>(env, "/state/secret", {
-    ...postJson({ pkh, hEvm, secretHex }),
-    method: "PUT",
-  });
+  return withMarket(env, (stub) => stub.putSwapSecret(pkh, hEvm, secretHex));
 }
 
 export async function listPnl(env: Env, pkh: string): Promise<PnlEntry[]> {
-  const { pnl } = await callMarket<{ pnl: PnlEntry[] }>(
-    env,
-    `/state/pnl?pkh=${encodeURIComponent(pkh)}`
-  );
-  return pnl;
+  return withMarket(env, (stub) => stub.listPnl(pkh));
 }
 
 export async function appendPnl(env: Env, pkh: string, entry: PnlEntry): Promise<void> {
-  await callMarket(env, "/state/pnl", postJson({ pkh, entry }));
+  await withMarket(env, (stub) => stub.appendPnl(pkh, entry));
 }
 
 export function pnlSummary(pnl: PnlEntry[]): { nock: number; usd: number; count: number } {

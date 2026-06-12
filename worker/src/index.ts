@@ -109,7 +109,7 @@ import type {
 } from "./contract.js";
 
 // Durable Object class must be exported from the worker entry module.
-export { Market } from "./market.js";
+export { Market } from "./market-do.js";
 
 const CORS: Record<string, string> = {
   "access-control-allow-origin": "*",

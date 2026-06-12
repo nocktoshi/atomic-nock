@@ -7,7 +7,7 @@
 import type { BidRecord } from "./market.js";
 import type { SwapRecord } from "./contract.js";
 import type { Env } from "./swaps.js";
-import { callMarket } from "./market-client.js";
+import { withMarket } from "./market-client.js";
 
 export interface MarketFeed {
   swaps: SwapRecord[];
@@ -16,5 +16,5 @@ export interface MarketFeed {
 }
 
 export async function getMarketFeed(env: Env, limit = 50): Promise<MarketFeed> {
-  return callMarket<MarketFeed>(env, `/feed?limit=${Math.floor(limit) || 50}`);
+  return withMarket(env, (stub) => stub.feed(Math.floor(limit) || 50));
 }

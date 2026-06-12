@@ -7,7 +7,7 @@
 import { type Env } from "./swaps.js";
 import type { SwapRecord } from "./contract.js";
 import type { BidRecord } from "./market.js";
-import { callMarket, callMarketOrNull, postJson } from "./market-client.js";
+import { marketRpc, marketStub, withMarket } from "./market-client.js";
 
 export type { BidRecord };
 
@@ -15,10 +15,10 @@ export async function lookupBid(
   env: Env,
   id: string
 ): Promise<BidRecord | { filledHEvm: string } | null> {
-  return callMarketOrNull<BidRecord | { filledHEvm: string }>(
-    env,
-    `/bid/get?id=${encodeURIComponent(id)}`
-  );
+  return marketRpc(async () => {
+    const r = await marketStub(env).lookupBid(id);
+    return r as BidRecord | { filledHEvm: string } | null;
+  });
 }
 
 export async function createBid(
@@ -26,11 +26,11 @@ export async function createBid(
   body: Record<string, unknown>,
   sessionPkh: string
 ): Promise<BidRecord> {
-  return callMarket<BidRecord>(env, "/bid/create", postJson({ bid: body, sessionPkh }));
+  return withMarket(env, (stub) => stub.createBid(body, sessionPkh));
 }
 
 export async function cancelBid(env: Env, id: string, sessionPkh: string): Promise<void> {
-  await callMarket(env, "/bid/cancel", postJson({ id, sessionPkh }));
+  await withMarket(env, (stub) => stub.cancelBid(id, sessionPkh));
 }
 
 export async function fillBid(
@@ -39,9 +39,5 @@ export async function fillBid(
   swap: Record<string, unknown>,
   sessionPkh: string
 ): Promise<{ swap: SwapRecord; bid: BidRecord }> {
-  return callMarket<{ swap: SwapRecord; bid: BidRecord }>(
-    env,
-    "/bid/fill",
-    postJson({ id, swap, sessionPkh })
-  );
+  return withMarket(env, (stub) => stub.fillBid(id, swap, sessionPkh));
 }

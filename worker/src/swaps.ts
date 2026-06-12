@@ -9,6 +9,7 @@
  */
 import type { SwapRecord } from "./contract.js";
 import type { RateLimiter } from "./ratelimit.js";
+import type { Market } from "./market-do.js";
 
 export interface Env {
   SWAPS: KVNamespace;
@@ -25,7 +26,7 @@ export interface Env {
   /** Market Durable Object — the strongly-consistent system of record for
    *  swaps, bids, RFQs, and solver state (KV is eventually consistent and
    *  transactionless; see market.ts). */
-  MARKET_DO?: DurableObjectNamespace;
+  MARKET_DO?: DurableObjectNamespace<Market>;
   /** Telegram notifications (secrets via `wrangler secret put`). */
   TELEGRAM_BOT_TOKEN?: string;
   TELEGRAM_WEBHOOK_SECRET?: string;
@@ -53,10 +54,10 @@ export interface Env {
 
 export { SwapError } from "./errors.js";
 
-import { callMarket, callMarketOrNull, postJson } from "./market-client.js";
+import { withMarket } from "./market-client.js";
 
 export async function loadSwap(env: Env, hEvm: string): Promise<SwapRecord | null> {
-  return callMarketOrNull<SwapRecord>(env, `/swap/get?hEvm=${encodeURIComponent(hEvm)}`);
+  return withMarket(env, (stub) => stub.loadSwap(hEvm));
 }
 
 export async function createSwap(
@@ -64,7 +65,7 @@ export async function createSwap(
   swap: Record<string, unknown>,
   sessionPkh: string
 ): Promise<SwapRecord> {
-  return callMarket<SwapRecord>(env, "/swap/create", postJson({ swap, sessionPkh }));
+  return withMarket(env, (stub) => stub.createSwap(swap, sessionPkh));
 }
 
 export async function claimSwap(
@@ -73,11 +74,11 @@ export async function claimSwap(
   buyerEth: string,
   sessionPkh: string
 ): Promise<SwapRecord> {
-  return callMarket<SwapRecord>(env, "/swap/claim", postJson({ hEvm, buyerEth, sessionPkh }));
+  return withMarket(env, (stub) => stub.claimSwap(hEvm, buyerEth, sessionPkh));
 }
 
 export async function cancelSwap(env: Env, hEvm: string, sessionPkh: string): Promise<void> {
-  await callMarket(env, "/swap/cancel", postJson({ hEvm, sessionPkh }));
+  await withMarket(env, (stub) => stub.cancelSwap(hEvm, sessionPkh));
 }
 
 export async function advanceSwap(
@@ -87,18 +88,10 @@ export async function advanceSwap(
   sessionPkh: string,
   expectedVersion?: number
 ): Promise<SwapRecord> {
-  return callMarket<SwapRecord>(
-    env,
-    "/swap/advance",
-    postJson({ hEvm, fields, sessionPkh, expectedVersion })
-  );
+  return withMarket(env, (stub) => stub.advanceSwap(hEvm, fields, sessionPkh, expectedVersion));
 }
 
 /** Every swap id a pkh participates in (replaces the KV idx:nock listing). */
 export async function listMySwapIds(env: Env, pkh: string): Promise<string[]> {
-  const { ids } = await callMarket<{ ids: string[] }>(
-    env,
-    `/swap/mine?pkh=${encodeURIComponent(pkh)}`
-  );
-  return ids;
+  return withMarket(env, (stub) => stub.listMine(pkh));
 }
