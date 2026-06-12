@@ -3,11 +3,13 @@
  * posts a bid (USDC → NOCK); sell posts an open ask (NOCK → USDC). Active
  * in-progress flows resume on /order/:id (buy) or /sell/:id (sell).
  */
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState, useSyncExternalStore } from "react";
 import { useNavigate } from "react-router-dom";
 import { useSession } from "./session.js";
 import { useLog, LogBox } from "./log.js";
 import { useSolverRfq } from "./useSolverRfq.js";
+import { useWalletConnectActions } from "./useWalletConnectActions.js";
+import { subscribeWallets, getWalletsSnapshot } from "../evm/providers.js";
 import { TokenIcon } from "./TokenIcon.js";
 import { getSwapRepository } from "../app/repo/swap-repo.js";
 import { generateSwapAction } from "../actions/seller.js";
@@ -26,11 +28,17 @@ export function SolverTrade() {
   const navigate = useNavigate();
   const repo = useMemo(() => getSwapRepository(), []);
   const { nock, evm } = useSession();
+  const { connectIris, connectEvm, connectBusy } = useWalletConnectActions();
+  const evmWallets = useSyncExternalStore(subscribeWallets, getWalletsSnapshot);
+  const [evmPickerOpen, setEvmPickerOpen] = useState(false);
   const { state: logState, log, logErr } = useLog(
     "Swap native NOCK with USDC — the solver quotes on demand; you approve each wallet step."
   );
 
   const [direction, setDirection] = useState<Direction>("buy");
+  useEffect(() => {
+    setEvmPickerOpen(false);
+  }, [evm, nock, direction]);
   const [usd, setUsd] = useState("");
   const [nockAmt, setNockAmt] = useState("");
   const [busy, setBusy] = useState(false);
@@ -159,10 +167,42 @@ export function SolverTrade() {
           ? `Swap → ~$${estOut!.toFixed(2)} USDC`
           : "Sell NOCK";
 
-  const walletHint =
+  const walletsReady = !!evm && !!nock;
+  const connectTarget =
     direction === "buy"
-      ? "Connect Base (pay USDC) + Iris (receive NOCK)."
-      : "Connect Iris (sell NOCK) + Base (receive USDC).";
+      ? !evm
+        ? "evm"
+        : !nock
+          ? "nock"
+          : null
+      : !nock
+        ? "nock"
+        : !evm
+          ? "evm"
+          : null;
+  const connectLabel =
+    connectTarget === "evm"
+      ? connectBusy
+        ? "Connecting…"
+        : "Connect Base"
+      : connectTarget === "nock"
+        ? connectBusy
+          ? "Connecting…"
+          : "Connect Iris"
+        : "Connect wallets";
+
+  async function onConnectWallets(): Promise<void> {
+    if (connectBusy || !connectTarget) return;
+    if (connectTarget === "nock") {
+      await connectIris();
+      return;
+    }
+    if (evmWallets.length > 1) {
+      setEvmPickerOpen((o) => !o);
+      return;
+    }
+    await connectEvm(evmWallets[0]?.info.rdns);
+  }
 
   const maxHint =
     direction === "buy"
@@ -264,24 +304,55 @@ export function SolverTrade() {
         {underMin && (
           <span className="addr-resolve-hint swap-warn">{minNockAmountError()}</span>
         )}
-        <button
-          type="button"
-          className={"swap-submit" + (busy ? " busy" : "")}
-          disabled={
-            busy ||
-            rfqLoading ||
-            !evm ||
-            !nock ||
-            !quoteReady ||
-            !(direction === "buy" ? usd : nockAmt) ||
-            overMax ||
-            underMin
-          }
-          onClick={() => void onSubmit()}
-        >
-          {submitLabel}
-        </button>
-        {(!evm || !nock) && <span className="addr-resolve-hint">{walletHint}</span>}
+        {!walletsReady ? (
+          <div className="wallet-picker">
+            <button
+              type="button"
+              className={"swap-submit" + (connectBusy ? " busy" : "")}
+              disabled={connectBusy}
+              onClick={() => void onConnectWallets()}
+            >
+              {connectLabel}
+            </button>
+            {evmPickerOpen && connectTarget === "evm" && (
+              <>
+                <div className="wallet-backdrop" onClick={() => setEvmPickerOpen(false)} />
+                <div className="wallet-menu">
+                  {evmWallets.map((w) => (
+                    <button
+                      key={w.info.rdns}
+                      type="button"
+                      className="wallet-menu-item"
+                      onClick={() => {
+                        setEvmPickerOpen(false);
+                        void connectEvm(w.info.rdns);
+                      }}
+                    >
+                      <img src={w.info.icon} alt="" width={18} height={18} />
+                      {w.info.name}
+                    </button>
+                  ))}
+                </div>
+              </>
+            )}
+          </div>
+        ) : (
+          <button
+            type="button"
+            className={"swap-submit" + (busy ? " busy" : "")}
+            disabled={
+              busy ||
+              rfqLoading ||
+              !quoteReady ||
+              !(direction === "buy" ? usd : nockAmt) ||
+              overMax ||
+              underMin
+            }
+            onClick={() => void onSubmit()}
+          >
+            {submitLabel}
+          </button>
+        )}
       </div>
       <p className="fee-disclaimer">
         Trustless: funds stay protected by on-chain refunds the whole time.
