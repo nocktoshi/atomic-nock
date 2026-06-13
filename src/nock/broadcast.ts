@@ -27,6 +27,13 @@ export interface GrpcLike {
  * Rust-side spend witness expect it on the individual spend so it serializes into the hax
  * list with value bytes for check:hax.
  */
+function namesMatch(
+  a: { first?: unknown; last?: unknown },
+  b: { first?: unknown; last?: unknown }
+): boolean {
+  return a.first === b.first && a.last === b.last;
+}
+
 export function ensureHaxPreimagesOnSpendWitnesses(tx: NockchainTx): void {
   try {
     const txRec = tx as NockchainTx & MutableRecord;
@@ -35,6 +42,8 @@ export function ensureHaxPreimagesOnSpendWitnesses(tx: NockchainTx): void {
       : undefined;
     const wdata = (wd?.data ?? wd) as unknown;
     if (!Array.isArray(wdata) || !Array.isArray(txRec.spends)) return;
+
+    // witness_data → per-spend witness (builder path)
     for (const entry of wdata) {
       if (!Array.isArray(entry) || entry.length < 2) continue;
       const name = asMutable(entry[0]);
@@ -48,11 +57,31 @@ export function ensureHaxPreimagesOnSpendWitnesses(tx: NockchainTx): void {
         const sw = asMutable(spendBody.witness ?? spendBody);
         if (
           sw &&
-          sname.first === name.first &&
-          sname.last === name.last &&
+          namesMatch(sname, name) &&
           (!Array.isArray(sw.hax_map) || sw.hax_map.length === 0)
         ) {
           sw.hax_map = haxEntries;
+        }
+      }
+    }
+
+    // per-spend witness → witness_data (Rose signer may drop hax from data only)
+    for (const sp of txRec.spends) {
+      if (!Array.isArray(sp) || sp.length < 2) continue;
+      const sname = asMutable(sp[0]);
+      const spendBody = asMutable(sp[1]);
+      const sw = asMutable(spendBody.witness ?? spendBody);
+      const haxEntries = sw.hax_map;
+      if (!Array.isArray(haxEntries) || haxEntries.length === 0) continue;
+      for (const entry of wdata) {
+        if (!Array.isArray(entry) || entry.length < 2) continue;
+        const name = asMutable(entry[0]);
+        const w = asMutable(entry[1]);
+        if (
+          namesMatch(sname, name) &&
+          (!Array.isArray(w.hax_map) || w.hax_map.length === 0)
+        ) {
+          w.hax_map = haxEntries;
         }
       }
     }

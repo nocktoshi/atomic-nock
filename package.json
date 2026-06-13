@@ -12,7 +12,7 @@
     "test:watch": "vitest"
   },
   "dependencies": {
-    "@nockchain/rose-ts": "0.1.1-alpha.4",
+    "@nockchain/rose-ts": "0.1.1-alpha.5",
     "@scure/base": "2.2.0",
     "react": "19.2.7",
     "react-dom": "19.2.7",
