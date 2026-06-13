@@ -1074,29 +1074,6 @@ select.swap-token {
   margin: 0.75rem 0;
 }
 
-/* "Buy from any chain" entry under the swap box. */
-.any-chain-row {
-  display: flex;
-  justify-content: center;
-  margin: 0.5rem 0 0.25rem;
-}
-
-.any-chain-link {
-  padding: 0.4rem 0.9rem;
-  border-radius: 999px;
-  background: linear-gradient(135deg, var(--card), var(--accent));
-  border: 1px solid var(--border);
-  color: var(--text);
-  font-size: 0.82rem;
-  font-weight: 700;
-  cursor: pointer;
-}
-
-.any-chain-link:hover {
-  background: linear-gradient(135deg, var(--accent), var(--card));
-  border-style: solid;
-}
-
 /* --- Marketplace order entry (SwapBox) + order book controls --- */
 .swap-flip {
   display: flex;

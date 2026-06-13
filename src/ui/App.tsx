@@ -9,7 +9,6 @@ import { WalletBar } from "./WalletBar.js";
 import { Dashboard } from "./Dashboard.js";
 import { Marketplace } from "./Marketplace.js";
 import { BidPage } from "./BidPage.js";
-import { BuyFromAnyChain } from "./BuyFromAnyChain.js";
 import { SolverTrade } from "./SolverTrade.js";
 import { TradeNav } from "./TradeNav.js";
 import { SolverSwap } from "./SolverSwap.js";
@@ -56,11 +55,6 @@ function HomeRoute() {
     <>
       <TradeNav />
       <SolverTrade />
-      <div className="home-links">
-        <button type="button" className="any-chain-link" onClick={() => navigate("/buy")}>
-          ⛓ Buy from any chain (ETH, USDC on L2s, …)
-        </button>
-      </div>
     </>
   );
 }
@@ -81,16 +75,6 @@ function SellOrderRoute() {
     <div className="role-flow">
       <BackToMarket />
       <SolverSell />
-    </div>
-  );
-}
-
-/** Buy NOCK from any asset/chain via a 1Click hop → auto-bid. */
-function BuyRoute() {
-  return (
-    <div className="role-flow">
-      <BackToMarket />
-      <BuyFromAnyChain />
     </div>
   );
 }
@@ -216,7 +200,6 @@ export function App() {
         <Route path="/dashboard" element={<DashboardRoute />} />
         <Route path="/settings" element={<SettingsRoute />} />
         <Route path="/new" element={<NewSwapRoute />} />
-        <Route path="/buy" element={<BuyRoute />} />
         <Route path="/order/:id" element={<OrderRoute />} />
         <Route path="/sell/:id" element={<SellOrderRoute />} />
         <Route path="/swap/:id" element={<SwapRoute />} />

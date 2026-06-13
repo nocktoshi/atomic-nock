@@ -265,11 +265,6 @@ export function Marketplace() {
       <section className="panel">
         <h2 className="flow-title">OTC NOCK</h2>
         <SwapBox log={log} logErr={logErr} onBidCreated={() => void refresh()} />
-        <div className="any-chain-row">
-          <button type="button" className="any-chain-link" onClick={() => navigate("/buy")}>
-            ⛓ Buy NOCK from any chain (ETH, USDC, …)
-          </button>
-        </div>
         <LogBox state={logState} />
 
         <div className="market-controls">
