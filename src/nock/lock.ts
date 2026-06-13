@@ -1,4 +1,4 @@
-import { TxEngineSettings, Digest, lockFromList, nockchainTxToRawTx, noteDataEmpty, noteHash, pkhSingle, rawTxTotalFees, rawTxV1Outputs, SpendBuilder, spendConditionNewPkh, TxBuilder, txEngineSettingsV1BythosDefault } from '@nockchain/rose-ts'
+import { Digest, lockFromList, nockchainTxToRawTx, noteDataEmpty, noteHash, pkhSingle, rawTxTotalFees, rawTxV1Outputs, SpendBuilder, spendConditionNewPkh, TxBuilder, txEngineSettingsV1BythosDefault } from '@nockchain/rose-ts'
 import {
   htlcLockRootDigest,
   htlcGiftOutputFirstName,
