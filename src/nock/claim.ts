@@ -93,7 +93,8 @@ export async function claimNock(
   const effIdx = debug.__forceBirthOutputIndex ?? params.birthOutputIndex;
 
   if (effParent) {
-    const idx = (typeof effIdx === 'number' ? effIdx : 0);
+    const idx =
+      typeof effIdx === "number" && Number.isFinite(effIdx) ? Math.trunc(effIdx) : 0;
     // First normalize the fetched note (the roundtrip ensures it's in canonical form
     // that the builder likes).
     htlcNote = noteFromProtobuf(noteToProtobuf(htlcNote));

@@ -141,9 +141,14 @@ export function decodeSwapParams(json: string): SwapPublic {
     lockFirstName: str(raw.lockFirstName) as Digest | undefined,
     lockRoot: str(raw.lockRoot) as Digest | undefined,
     parentHash: str(raw.parentHash) as Digest | undefined,
-    birthOutputIndex: raw.birthOutputIndex != null
-      ? (typeof raw.birthOutputIndex === 'number' ? raw.birthOutputIndex : Number(raw.birthOutputIndex))
-      : undefined,
+    birthOutputIndex: (() => {
+      if (raw.birthOutputIndex == null) return undefined;
+      const n =
+        typeof raw.birthOutputIndex === "number"
+          ? raw.birthOutputIndex
+          : Number(raw.birthOutputIndex);
+      return Number.isFinite(n) && n >= 0 ? Math.trunc(n) : undefined;
+    })(),
     nockLockTxId: str(raw.nockLockTxId),
     usdcLockTxHash: str(raw.usdcLockTxHash),
     usdcWithdrawTxHash: str(raw.usdcWithdrawTxHash),
