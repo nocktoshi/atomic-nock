@@ -1,20 +1,12 @@
 /**
- * Adapter: Iris `nock_signMessage` response → the Worker's verification wire
+ * Adapter: Rose `nock_signMessage` response → the Worker's verification wire
  * format ({ pubkeyHex, signature }).
- *
- * Confirmed shapes (from a real Iris signing):
- *   publicKey = base58 string  → decode to the raw pubkey bytes (hex on the wire)
- *   signature = { c, s }       → a Schnorr signature (little-endian hex scalars);
- *                                rose-wasm's verifySignature takes this object as-is.
- *
- * We self-check client-side with the exact rose-wasm calls the Worker runs, so a
- * mismatch surfaces here (clear console diagnostics) instead of as an opaque 401.
  */
 import { base58 } from "@scure/base";
+import { hashPublicKey, verifySignature } from "@nockchain/rose-ts";
 import type { NockWalletSession, RawSignMessageResponse } from "./wallet.js";
-import { getRoseWasm } from "../rose.js";
 
-/** Schnorr signature scalars, as rose-wasm's verifySignature expects them. */
+/** Schnorr signature scalars, as verifySignature expects them. */
 export interface NockSignature {
   c: string;
   s: string;
@@ -49,7 +41,7 @@ function decodeAtom(v: unknown, field: string): Uint8Array {
     if (hex.length > 0 && hex.length % 2 === 0 && /^[0-9a-fA-F]+$/.test(hex)) {
       return hexToBytes(hex);
     }
-    return base58.decode(t); // base58 (the format Iris returns)
+    return base58.decode(t);
   }
   if (v && typeof v === "object") {
     const o = v as Record<string, unknown>;
@@ -57,7 +49,7 @@ function decodeAtom(v: unknown, field: string): Uint8Array {
     if (inner != null) return decodeAtom(inner, field);
   }
   console.error(`[sign] cannot decode ${field} from nock_signMessage:`, v);
-  throw new Error(`Unrecognized ${field} format from Iris nock_signMessage (see console).`);
+  throw new Error(`Unrecognized ${field} format from Rose nock_signMessage (see console).`);
 }
 
 /** Pull the { c, s } Schnorr scalars out of the raw signature value. */
@@ -69,30 +61,28 @@ function toSignature(v: unknown): NockSignature {
     }
   }
   console.error("[sign] cannot read { c, s } from signature:", v);
-  throw new Error("Unrecognized signature format from Iris nock_signMessage (see console).");
+  throw new Error("Unrecognized signature format from Rose nock_signMessage (see console).");
 }
 
-/** Sign `message` with the connected Iris wallet and return the Worker wire form. */
+/** Sign `message` with the connected Rose wallet and return the Worker wire form. */
 export async function signMessageForWorker(
   wallet: NockWalletSession,
   message: string
 ): Promise<SignedWire> {
   const raw: RawSignMessageResponse = await wallet.provider.signMessage(message);
-  const Rose = await getRoseWasm();
 
   const pubBytes = decodeAtom(raw.publicKey, "publicKey");
   const signature = toSignature(raw.signature);
 
-  // Self-check with the exact rose-wasm logic the Worker runs.
   try {
-    const derivedPkh = String(Rose.hashPublicKey(pubBytes));
+    const derivedPkh = String(hashPublicKey(pubBytes));
     if (wallet.pkh && derivedPkh !== String(wallet.pkh)) {
       console.warn(
         `[sign] pubkey hashes to ${derivedPkh} but wallet pkh is ${wallet.pkh} — ` +
-          `the Worker's pkh binding will reject this.`
+        `the Worker's pkh binding will reject this.`
       );
     }
-    if (!Rose.verifySignature(pubBytes, signature, message)) {
+    if (!verifySignature(pubBytes, signature, message)) {
       console.warn(
         "[sign] local verifySignature(message) failed — the Worker will reject it too."
       );

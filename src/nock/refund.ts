@@ -1,9 +1,7 @@
-import { getIrisWasm, initIrisWasm, type Note } from "../iris.js";
-import { getRoseWasm, initRoseWasm } from "../rose.js";
 import { runStep } from "../grpc.js";
-import { Nicks, Lock } from "@nockbox/iris-sdk/wasm";
+import { Nicks, Lock, lockFromList, Note, noteFromProtobuf, noteHash, noteToProtobuf, pkhSingle, seedV1NewSinglePkh, SpendBuilder, spendConditionNewPkh, TxBuilder, txEngineSettingsV1BythosDefault } from "@nockchain/rose-ts";
 import { htlcOrLock } from "./tx.js";
-import { signAndSendIrisTx, type NockWalletSession } from "./wallet.js";
+import { signAndSendRoseTx, type NockWalletSession } from "./wallet.js";
 import { fetchNotesByFirstName, pickLargestNote } from "./balance.js";
 import type { SwapPublic } from "../swap.js";
 
@@ -21,15 +19,10 @@ export async function refundNock(
 ): Promise<string> {
   if (!swap.lockFirstName) throw new Error("Swap has no lockFirstName to refund");
 
-  await initIrisWasm();
-  const Iris = await getIrisWasm();
-  await initRoseWasm();
-  const Rose = await getRoseWasm();
-
   if (wallet.pkh !== swap.sellerPkh) {
     throw new Error(
-      `Connected Iris pkh (${wallet.pkh}) does not match swap sellerPkh (${swap.sellerPkh}) — ` +
-        `only the seller can refund.`
+      `Connected Rose pkh (${wallet.pkh}) does not match swap sellerPkh (${swap.sellerPkh}) — ` +
+      `only the seller can refund.`
     );
   }
 
@@ -59,7 +52,7 @@ export async function refundNock(
   const effParent = swap.parentHash;
   const effIdx = typeof swap.birthOutputIndex === "number" ? swap.birthOutputIndex : 0;
   if (effParent) {
-    htlcNote = Iris.noteFromProtobuf(Iris.noteToProtobuf(htlcNote));
+    htlcNote = noteFromProtobuf(noteToProtobuf(htlcNote));
     const birthSrc = { Parent: { parent: effParent, index: effIdx } };
     const n = htlcNote as Note & Record<string, unknown>;
     n.source = birthSrc;
@@ -74,8 +67,8 @@ export async function refundNock(
     }
   }
 
-  const settings = Iris.txEngineSettingsV1BythosDefault();
-  const tx = new Rose.TxBuilder(settings);
+  const settings = txEngineSettingsV1BythosDefault();
+  const tx = new TxBuilder(settings);
 
   await runStep("Build HTLC refund spend", async () => {
     let orLock = (htlcNote as Note & { lock?: Lock }).lock;
@@ -88,15 +81,15 @@ export async function refundNock(
       );
     }
 
-    const sellerPkhLock = Iris.lockFromList([
-      Iris.spendConditionNewPkh(Iris.pkhSingle(swap.sellerPkh)),
+    const sellerPkhLock = lockFromList([
+      spendConditionNewPkh(pkhSingle(swap.sellerPkh)),
     ]);
 
     // Branch index 1 = the refund (seller + timelock) branch of the OR lock.
-    const spend = new Rose.SpendBuilder(htlcNote, orLock, 1, sellerPkhLock);
+    const spend = SpendBuilder.new(htlcNote, orLock, 1, sellerPkhLock);
 
-    const parentHash = Iris.noteHash(htlcNote);
-    const outputSeed = Iris.seedV1NewSinglePkh(
+    const parentHash = noteHash(htlcNote);
+    const outputSeed = seedV1NewSinglePkh(
       swap.sellerPkh, // refund back to the seller
       htlcAssets as Nicks,
       parentHash,
@@ -112,5 +105,5 @@ export async function refundNock(
   });
 
   const inputNotesForTx = [htlcNote].filter(Boolean) as Note[];
-  return signAndSendIrisTx(wallet, tx, inputNotesForTx);
+  return signAndSendRoseTx(wallet, tx, inputNotesForTx);
 }

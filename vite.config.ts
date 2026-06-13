@@ -35,9 +35,7 @@ export default defineConfig(({ mode }) => {
         },
       },
     },
-    optimizeDeps: {
-      exclude: ["@nockbox/iris-wasm", "@nockchain/rose-wasm"],
-    },
+
     plugins: [
       react(),
       {

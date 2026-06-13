@@ -1,26 +1,19 @@
 /**
- * Iris extension wallet — build with iris-wasm, sign via API 1 `nock_signTx`, send protobuf as-is.
+ * Rose extension wallet — build with iris-wasm, sign via API 1 `nock_signTx`, send protobuf as-is.
  */
 import { getGrpcWebUrl, formatWalletError } from "../grpc.js";
 import { isPlausibleWalletAddress } from "./balance.js";
 import {
-  isIrisWasmPanic,
+  isRoseWasmPanic,
 } from "./tx.js";
-import { Digest } from '@nockbox/iris-sdk/wasm'
-import { resetIrisWasm } from "../iris.js";
-import {
-  getIrisWasm,
-  initIrisWasm,
-  type NockchainTx,
-  type Note,
-} from "../iris.js";
+import { Digest, GrpcClient, NockchainTx, Note, TxBuilder } from '@nockchain/rose-ts'
 import { prepareBuiltTx, finalizeAndBroadcast } from "./broadcast.js";
 
 
-/** Iris extension RPC API v1 (must match extension `RPC_API_VERSION`). */
+/** Rose extension RPC API v1 (must match extension `RPC_API_VERSION`). */
 const IRIS_RPC_API_V1 = "1.0.0";
 
-/** Iris SDK provider methods (API 1). */
+/** Rose SDK provider methods (API 1). */
 const IRIS_SIGN_TX = "nock_signTx";
 
 
@@ -31,7 +24,7 @@ const IRIS_SIGN_TX = "nock_signTx";
 // node accepts the declared id directly.
 
 /** Sign params for `nock_signTx` (native `NockchainTx` + optional input notes). */
-export type IrisSignTxParams = {
+export type RoseSignTxParams = {
   tx: NockchainTx;
   notes?: Note[];
 };
@@ -47,19 +40,27 @@ export type RawSignMessageResponse = {
 };
 
 export type NockWalletProvider = {
-  _isIrisWrapper?: boolean;
+  _isRoseWrapper?: boolean;
   connect(): Promise<{ pkh?: string; address?: string }>;
   /** API 1.0 — signs native `NockchainTx` (sign-only; we broadcast via gRPC). */
-  signTx(params: IrisSignTxParams): Promise<NockchainTx>;
+  signTx(params: RoseSignTxParams): Promise<NockchainTx>;
   /** API 1.0 — signs an arbitrary message (used for server sign-in). */
   signMessage(message: string): Promise<RawSignMessageResponse>;
+};
+
+/** Solver-only: one Nockchain tx per block after broadcast clears. */
+export type NockTxGateHooks = {
+  onBroadcast(txId: string): void;
+  onBroadcastFailed(err: unknown): void;
 };
 
 export type NockWalletSession = {
   pkh: Digest;
   address?: string;
   provider: NockWalletProvider;
-  grpc: InstanceType<Awaited<ReturnType<typeof getIrisWasm>>["GrpcClient"]>;
+  grpc: GrpcClient;
+  /** Present on the headless solver wallet; unused in the browser. */
+  txGate?: NockTxGateHooks;
 };
 
 declare global {
@@ -78,7 +79,7 @@ declare global {
 }
 
 /**
- * Race a promise against a hard client-side deadline. The Iris extension can stop
+ * Race a promise against a hard client-side deadline. The Rose extension can stop
  * responding entirely (message channel dies) and never resolve OR reject — which
  * leaves the calling button stuck disabled forever. This guarantees a rejection so
  * `runBusy`'s finally re-enables the button and the user can retry.
@@ -90,8 +91,8 @@ function withTimeout<T>(p: Promise<T>, ms: number, method: string): Promise<T> {
       () =>
         reject(
           new Error(
-            `Iris ${method} timed out after ${Math.round(ms / 1000)}s — the extension may be ` +
-              `unresponsive. Reopen/unlock Iris (or reload the extension) and try again.`
+            `Rose ${method} timed out after ${Math.round(ms / 1000)}s — the extension may be ` +
+            `unresponsive. Reopen/unlock Rose (or reload the extension) and try again.`
           )
         ),
       ms
@@ -110,9 +111,9 @@ async function irisRequest<T>(
     const deadline = (args.timeout ?? 60_000) + 15_000;
     return await withTimeout(nockchain.request<T>(args), deadline, args.method);
   } catch (err) {
-    console.error(`Iris ${args.method} rejected:`, err);
+    console.error(`Rose ${args.method} rejected:`, err);
     if (err instanceof Error && err.cause != null) {
-      console.error(`Iris ${args.method} cause:`, err.cause);
+      console.error(`Rose ${args.method} cause:`, err.cause);
     }
     if (!(err instanceof Error)) {
       throw new Error(formatWalletError(err), { cause: err });
@@ -130,9 +131,22 @@ function unwrapSignedTxResponse(result: unknown): unknown {
   return result;
 }
 
-function formatIrisSignFailure(err: unknown): string {
+function isNockTxGateBusy(err: unknown): boolean {
+  let cur: unknown = err;
+  for (let i = 0; i < 4 && cur != null; i++) {
+    if (cur instanceof Error) {
+      if (cur.name === "NockTxBusyError" || cur.message.includes("nock-tx-gate")) return true;
+      cur = cur.cause;
+      continue;
+    }
+    break;
+  }
+  return false;
+}
+
+function formatRoseSignFailure(err: unknown): string {
   const msg = formatWalletError(err);
-  if (isIrisWasmPanic(err)) {
+  if (isRoseWasmPanic(err)) {
     return (
       `${msg} — iris-wasm panicked while decoding a Tip5 digest (invalid sellerPkh, lockFirstName, ` +
       `buyerPkh, or note name in swap JSON). Hard-reload this page (wasm is poisoned until reload), ` +
@@ -142,9 +156,9 @@ function formatIrisSignFailure(err: unknown): string {
   return msg;
 }
 
-function createIrisProvider(nockchain: NonNullable<Window["nockchain"]>): NockWalletProvider {
+function createRoseProvider(nockchain: NonNullable<Window["nockchain"]>): NockWalletProvider {
   return {
-    _isIrisWrapper: true,
+    _isRoseWrapper: true,
     async connect() {
       try {
         const result = await irisRequest<
@@ -155,7 +169,7 @@ function createIrisProvider(nockchain: NonNullable<Window["nockchain"]>): NockWa
         });
         return result;
       } catch (err) {
-        throw new Error(`Iris nock_connect: ${formatWalletError(err)}`, { cause: err });
+        throw new Error(`Rose nock_connect: ${formatWalletError(err)}`, { cause: err });
       }
     },
     async signTx(params) {
@@ -171,7 +185,7 @@ function createIrisProvider(nockchain: NonNullable<Window["nockchain"]>): NockWa
         if (signed != null && typeof signed === "object") {
           return signed as NockchainTx;
         }
-        throw new Error("Iris nock_signTx returned no signed transaction");
+        throw new Error("Rose nock_signTx returned no signed transaction");
       } catch (err) {
         throw new Error(formatWalletError(err), { cause: err });
       }
@@ -191,7 +205,7 @@ function createIrisProvider(nockchain: NonNullable<Window["nockchain"]>): NockWa
   };
 }
 
-export async function waitForIrisWallet(timeoutMs = 5000): Promise<NonNullable<Window["nockchain"]>> {
+export async function waitForRoseWallet(timeoutMs = 5000): Promise<NonNullable<Window["nockchain"]>> {
   if (window.nockchain?.request) return window.nockchain;
 
   return new Promise((resolve, reject) => {
@@ -199,7 +213,7 @@ export async function waitForIrisWallet(timeoutMs = 5000): Promise<NonNullable<W
       window.removeEventListener("nockchain#initialized", onInit);
       reject(
         new Error(
-          "Iris wallet not found. Install the Iris extension and refresh this page."
+          "Rose wallet not found. Install the Rose extension and refresh this page."
         )
       );
     }, timeoutMs);
@@ -217,20 +231,18 @@ export async function waitForIrisWallet(timeoutMs = 5000): Promise<NonNullable<W
   });
 }
 
-export async function connectIrisWallet(): Promise<NockWalletSession> {
-  await initIrisWasm();
-  const Iris = await getIrisWasm();
-  const injected = await waitForIrisWallet();
-  const provider = createIrisProvider(injected);
+export async function connectRoseWallet(): Promise<NockWalletSession> {
+  const injected = await waitForRoseWallet();
+  const provider = createRoseProvider(injected);
   const raw = await provider.connect();
   const rawPkh = pickString(raw, ["pkh", "PKH"]) as Digest;
-  if (!rawPkh) throw new Error("Iris connect did not return pkh");
+  if (!rawPkh) throw new Error("Rose connect did not return pkh");
 
   const address = isPlausibleWalletAddress(rawPkh)
     ? rawPkh
     : pickWalletAddress(raw);
 
-  const grpc = new Iris.GrpcClient(getGrpcWebUrl());
+  const grpc = new GrpcClient(getGrpcWebUrl());
   return {
     pkh: rawPkh,
     address,
@@ -275,16 +287,14 @@ export type ClaimSignContext = {
  * Build → sign (`nock_signTx`) → canonicalize tx id from spends → gRPC send.
  *
  * Pass the native Notes that were supplied to simpleSpend / SpendBuilder so the
- * Iris extension can display the actual inputs in the "Sign Raw Transaction" dialog
+ * Rose extension can display the actual inputs in the "Sign Raw Transaction" dialog
  * and produce a correctly authorized spend. Without them you get "Inputs (0)".
  */
-export async function signAndSendIrisTx(
+export async function signAndSendRoseTx(
   wallet: NockWalletSession,
-  builder: InstanceType<Awaited<ReturnType<typeof getIrisWasm>>["TxBuilder"]>,
+  builder: TxBuilder,
   inputNotes: Note[] = []
 ): Promise<string> {
-  await initIrisWasm();
-
   // Build + apply the pre-sign patches (shared with the solver daemon).
   const nockTx = prepareBuiltTx(builder, inputNotes);
 
@@ -295,20 +305,28 @@ export async function signAndSendIrisTx(
       notes: inputNotes,
     });
   } catch (err) {
-    if (isIrisWasmPanic(err)) {
-      try {
-        await resetIrisWasm();
-      } catch {
-        /* ignore */
-      }
-    }
-    throw new Error(
-      `Iris signing failed: ${formatIrisSignFailure(err)}. ` +
-        `Unlock Iris, approve the popup (check it is not blocked), then retry Claim NOCK.`,
-      { cause: err }
-    );
+    if (isNockTxGateBusy(err)) throw err;
+
+    const serverWallet = wallet.provider._isRoseWrapper === false;
+    const hint = serverWallet
+      ? "Solver defers to the next block (one Nockchain tx per block)."
+      : "Unlock Rose, approve the popup (check it is not blocked), then retry Claim NOCK.";
+    throw new Error(`Rose signing failed: ${formatRoseSignFailure(err)}. ${hint}`, { cause: err });
   }
 
   // Re-sync hax → rose id calc → protobuf → gRPC send (shared with the daemon).
-  return finalizeAndBroadcast(wallet.grpc, signedNockTx);
+  try {
+    const txId = await finalizeAndBroadcast(wallet.grpc, signedNockTx);
+    wallet.txGate?.onBroadcast(txId);
+    return txId;
+  } catch (err) {
+    wallet.txGate?.onBroadcastFailed(err);
+    throw err;
+  }
 }
+
+/** @deprecated Use connectRoseWallet — kept for existing UI imports. */
+export const connectIrisWallet = connectRoseWallet;
+
+/** @deprecated Use signAndSendRoseTx — kept for existing orchestration imports. */
+export const signAndSendIrisTx = signAndSendRoseTx;

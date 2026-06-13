@@ -1,12 +1,10 @@
-import { getIrisWasm, initIrisWasm, type Note } from "../iris.js";
-import { getRoseWasm, initRoseWasm } from "../rose.js";
 import { runStep } from "../grpc.js";
-import { Nicks, Digest, Lock } from '@nockbox/iris-sdk/wasm'
+import { Nicks, Digest, Lock, lockFromList, nockchainTxToRawTx, Note, noteFromProtobuf, noteHash, noteToProtobuf, pkhSingle, rawTxTotalFees, rawTxV1Outputs, seedV1NewSinglePkh, SpendBuilder, spendConditionNewPkh, TxBuilder, txEngineSettingsV1BythosDefault } from '@nockchain/rose-ts'
 import {
   htlcOrLock,
   htlcLockRootDigest,
 } from "./tx.js";
-import { signAndSendIrisTx, type NockWalletSession } from "./wallet.js";
+import { signAndSendRoseTx, type NockWalletSession } from "./wallet.js";
 import {
   fetchNotesByFirstName,
   pickLargestNote,
@@ -24,25 +22,20 @@ export interface ClaimResult {
 export async function claimNock(
   wallet: NockWalletSession,
   params: {
-  lockFirstName: Digest;
-  preimageJam: Uint8Array;
-  hNock: Digest;
-  sellerPkh: Digest;
-  buyerPkh: Digest;
-  refundHeight: bigint;
-  gift: Nicks;
-  lockRoot?: Digest;
-  /** Hash of the note the *seller* used as input when they locked (the "birth parent" of the HTLC gift note). Required for the claim spend to satisfy the node's "spend first name does not match parent note first name" check. */
-  parentHash?: Digest;
-  /** Output index of the HTLC gift note in the seller's lock tx (usually 0). */
-  birthOutputIndex?: number;
+    lockFirstName: Digest;
+    preimageJam: Uint8Array;
+    hNock: Digest;
+    sellerPkh: Digest;
+    buyerPkh: Digest;
+    refundHeight: bigint;
+    gift: Nicks;
+    lockRoot?: Digest;
+    /** Hash of the note the *seller* used as input when they locked (the "birth parent" of the HTLC gift note). Required for the claim spend to satisfy the node's "spend first name does not match parent note first name" check. */
+    parentHash?: Digest;
+    /** Output index of the HTLC gift note in the seller's lock tx (usually 0). */
+    birthOutputIndex?: number;
   }
 ): Promise<ClaimResult> {
-  await initIrisWasm();
-  const Iris = await getIrisWasm();
-  await initRoseWasm();
-  const Rose = await getRoseWasm();
-
   const lockRoot = await htlcLockRootDigest(
     params.hNock,
     params.buyerPkh,
@@ -64,8 +57,8 @@ export async function claimNock(
 
   if (wallet.pkh !== params.buyerPkh) {
     throw new Error(
-      `Connected Iris pkh (${wallet.pkh}) does not match swap buyerPkh (${params.buyerPkh}) — ` +
-      `only the designated buyer can claim. Make sure you are connected with the correct Iris account.`
+      `Connected Rose pkh (${wallet.pkh}) does not match swap buyerPkh (${params.buyerPkh}) — ` +
+      `only the designated buyer can claim. Make sure you are connected with the correct Rose account.`
     );
   }
 
@@ -103,8 +96,7 @@ export async function claimNock(
     const idx = (typeof effIdx === 'number' ? effIdx : 0);
     // First normalize the fetched note (the roundtrip ensures it's in canonical form
     // that the builder likes).
-    const Iris = await getIrisWasm();
-    htlcNote = Iris.noteFromProtobuf(Iris.noteToProtobuf(htlcNote));
+    htlcNote = noteFromProtobuf(noteToProtobuf(htlcNote));
     // Now attach the birth source AFTER normalization.
     // IMPORTANT: do this in a non-destructive way. Overwriting .name with a brand new plain object
     // (or adding too many extra props) can make the wasm Note no longer deserialize as a valid
@@ -137,12 +129,12 @@ export async function claimNock(
   if (params.sellerPkh === params.buyerPkh) {
     throw new Error(
       "swap sellerPkh equals buyerPkh — re-import swap JSON from seller after they locked NOCK " +
-      "(seller must use their nockblocks wallet address, not buyer Iris pkh)"
+      "(seller must use their nockblocks wallet address, not buyer Rose pkh)"
     );
   }
 
-  const settings = Iris.txEngineSettingsV1BythosDefault();
-  const tx = new Rose.TxBuilder(settings);
+  const settings = txEngineSettingsV1BythosDefault();
+  const tx = new TxBuilder(settings);
 
   await runStep("Build HTLC claim spend", async () => {
     // Prefer the real OR lock from the fetched note (which has the correct Pkh + Hax branch as set on chain).
@@ -163,14 +155,14 @@ export async function claimNock(
 
     // Low-level SpendBuilder for the claim input (the HTLC note under the OR lock, branch 0).
     // The 4th arg is the refundLock (used for computeRefund); we use a simple pkh lock for the buyer.
-    const buyerPkhLock = Iris.lockFromList([
-      Iris.spendConditionNewPkh(Iris.pkhSingle(params.buyerPkh)),
+    const buyerPkhLock = lockFromList([
+      spendConditionNewPkh(pkhSingle(params.buyerPkh)),
     ]);
 
-    const spend = new Rose.SpendBuilder(htlcNote, orLock, 0, buyerPkhLock);
+    const spend = SpendBuilder.new(htlcNote, orLock, 0, buyerPkhLock);
 
-    const parentHash = Iris.noteHash(htlcNote);
-    const outputSeed = Iris.seedV1NewSinglePkh(
+    const parentHash = noteHash(htlcNote);
+    const outputSeed = seedV1NewSinglePkh(
       params.buyerPkh,               // recipient pkh (the "address" of the output note)
       htlcAssets as Nicks,             // full assets of *this* HTLC note (clean gift, fee paid elsewhere)
       parentHash,                    // parent_hash = hash of the note we are spending (the HTLC note)
@@ -198,17 +190,17 @@ export async function claimNock(
   });
 
   // Re-check immediately before handing the built tx to the signer.
-  // The Iris extension's sign popup / nock_signTx uses whatever account is *currently active*
+  // The Rose extension's sign popup / nock_signTx uses whatever account is *currently active*
   // in the extension at the moment of the popup. The check at the top of claimNock can be
-  // stale if the user switched accounts in Iris after connect but before/during the claim flow.
+  // stale if the user switched accounts in Rose after connect but before/during the claim flow.
   // If the active key cannot satisfy the Pkh in the claim branch we built, the extension will
   // refuse with exactly the error you saw ("The note is not fully unlocked. ... Pkh { sig_of: ... }").
   const connectedNow = wallet.pkh;
   if (connectedNow !== params.buyerPkh) {
     throw new Error(
-      `Connected Iris pkh (${connectedNow}) does not match the buyerPkh required by the ` +
+      `Connected Rose pkh (${connectedNow}) does not match the buyerPkh required by the ` +
       `claim branch in the tx we just built (${params.buyerPkh}).\n` +
-      `In the Iris extension, make sure the account whose pkh is exactly ${params.buyerPkh} ` +
+      `In the Rose extension, make sure the account whose pkh is exactly ${params.buyerPkh} ` +
       `is the selected/active one, then retry Claim NOCK.`
     );
   }
@@ -222,16 +214,16 @@ export async function claimNock(
   let received = BigInt(params.gift.toString());
   try {
     const builtForRead = tx.build();
-    const raw = Iris.nockchainTxToRawTx(builtForRead);
-    fee = BigInt(Iris.rawTxTotalFees(raw));
-    const outs = Iris.rawTxV1Outputs(raw, 0, settings);
+    const raw = nockchainTxToRawTx(builtForRead);
+    fee = BigInt(rawTxTotalFees(raw));
+    const outs = rawTxV1Outputs(raw, 0, settings);
     received = outs.reduce((s, o) => s + BigInt(o.assets as string | number | bigint), 0n);
   } catch (e) {
     console.warn("claim fee/received read failed (non-fatal):", e);
   }
 
   const inputNotesForTx = [htlcNote].filter(Boolean) as Note[];
-  const txId = await signAndSendIrisTx(wallet, tx, inputNotesForTx);
+  const txId = await signAndSendRoseTx(wallet, tx, inputNotesForTx);
   return { txId, fee, received };
 }
 

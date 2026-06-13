@@ -1,5 +1,5 @@
 import type { Address, Hex } from "viem";
-import type { Digest } from "@nockbox/iris-sdk/wasm";
+import type { Digest } from "@nockchain/rose-ts";
 import {
   encodeSwapParams,
   decodeSwapParams,

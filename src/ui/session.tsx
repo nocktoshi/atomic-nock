@@ -8,7 +8,7 @@ import {
   type ReactNode,
 } from "react";
 import type { Address } from "viem";
-import type { Digest } from "@nockbox/iris-sdk/wasm";
+import type { Digest } from "@nockchain/rose-ts";
 import type { NockWalletSession } from "../nock/wallet.js";
 import { claimNockAction as claimNockActionCore } from "../actions/buyer.js";
 import {

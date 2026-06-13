@@ -15,7 +15,7 @@ import { secretStore } from "../app/storage/secret-store.js";
 import type { BidPublic } from "../app/repo/swap-repo.js";
 
 type LockNockFull = LockNockResult & { preview: LockNockPreview };
-import type { Digest } from "@nockbox/iris-sdk/wasm";
+import type { Digest } from "@nockchain/rose-ts";
 
 /**
  * Seller-side orchestration. Pure of storage: each action returns the updated

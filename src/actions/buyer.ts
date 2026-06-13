@@ -3,7 +3,7 @@ import { type SwapPublic, assertPreimageMatchesHNock } from "../swap.js";
 import { type TokenKey, tokenInfo } from "../config.js";
 import { approveAndLock, usdcToAtomic, computeSwapId, refundUsdc } from "../evm/htlc.js";
 import { getPreimageFromWithdrawTx, findPreimageFromSwapWithdraw } from "../evm/preimage.js";
-import type { Digest, Nicks } from "@nockbox/iris-sdk/wasm";
+import type { Digest, Nicks } from "@nockchain/rose-ts";
 
 
 /**

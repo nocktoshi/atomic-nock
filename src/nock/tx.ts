@@ -1,154 +1,19 @@
 import { base58 } from "@scure/base";
-import {
-  lockFromList,
-  lockRootHash,
-  pkhSingle,
-  initIrisWasm,
-  getIrisWasm,
-} from "../iris.js";
-import type {
-  Note,
-  Digest,
-  Lock,
-} from '@nockbox/iris-sdk/wasm';
+import type { Digest } from "@nockchain/rose-ts";
 
-/** Full OR(claim | refund) lock — use with `lock_sp_index: 0` to claim. */
-export async function htlcOrLock(
-  hNock: Digest,
-  buyerPkh: Digest,
-  sellerPkh: Digest,
-  refundHeight: bigint
-): Promise<Lock> {
-  await initIrisWasm();
-  const Iris = await getIrisWasm();
-
-  // Absolute spend conditions using the style from iris-sdk/extension/shared/spend-conditions.ts
-  // Base PKH via spendConditionNewPkh, then spread + add other primitive for compound branch.
-  // Claim branch: [Pkh(buyer), Hax(hNock)]  -- hNock is the preimage hash for the hax lock primitive.
-  const pkhSc = Iris.spendConditionNewPkh(Iris.pkhSingle(buyerPkh));
-  const haxPrim = { tag: "hax" as const, preimages: [hNock] };
-  const claimSpendCondition = [...pkhSc, haxPrim];
-
-  // Refund branch: [Pkh(seller), Tim(abs min = refundHeight)]
-  const sellerPkhPrim = Iris.pkhSingle(sellerPkh);
-  const refundPkhSc = Iris.spendConditionNewPkh(sellerPkhPrim);
-  // NOTE on timelock encoding (Number vs String):
-  //   iris hashes `tim.abs.min` to a DIFFERENT atom for `Number(h)` vs `String(h)`
-  //   (BigInt throws), so they produce different lock-tree roots. Verified against
-  //   nockchain's authoritative hoon lock-hash vectors: the node's CANONICAL encoding
-  //   is NUMBER (Number(h) reproduces the hoon vector; String does not). So a correct
-  //   refund timelock requires Number(refundHeight).
-  //   HOWEVER, the existing on-chain HTLC note (8sbGju…) was funded by an older build
-  //   that used String, so its committed name.first only matches a String-derived root.
-  //   We keep String here ONLY so that note's claim gets past the first-name check for
-  //   debugging — but that note is anyway UNCLAIMABLE due to the hax-preimage hash bug
-  //   (see below). For NEW swaps (after the hax fix) switch this back to Number(refundHeight)
-  //   so funding, claim, AND the seller refund timelock are all canonical/correct.
-  //
-  // BLOCKER: the real reason HTLC claims fail with v1-spend-1-lock-failed is that
-  //   iris `hashNoun` computes hash-varlen over the whole preimage noun, while the node's
-  //   hax check uses STRUCTURAL hash-noun (hash-varlen per belt leaf + hash-ten-cell per
-  //   cell). For a multi-belt preimage (tasBelts) these differ, so the committed hax hash
-  //   (hNock) never matches the node's check. Fix hNock to use the structural hash-noun.
-  const timPrim = {
-    tag: "tim" as const,
-    rel: { min: null, max: null },
-    abs: { min: Number(refundHeight), max: null },
-  };
-  const refundSpendCondition = [...refundPkhSc, timPrim];
-
-  return Iris.lockFromList([claimSpendCondition, refundSpendCondition] as never);
-}
-
-/** Digest of the HTLC OR lock tree (iris lockRootHash). */
-export async function htlcLockRootDigest(
-  hNock: Digest,
-  buyerPkh: Digest,
-  sellerPkh: Digest,
-  refundHeight: bigint
-): Promise<Digest> {
-  const lock = await htlcOrLock(hNock, buyerPkh, sellerPkh, refundHeight);
-  return lockRootHash(lock) as Digest;
-}
-
-/** Extract the HTLC gift output `name.first` from simulated lock outputs. */
-export function giftOutputFirstNameFromLockOutputs(
-  outputs: Array<{ name: { first: string }; assets: unknown }>,
-  giftNicks: bigint
-): Digest {
-  for (const out of outputs) {
-    if (BigInt(out.assets as string | number | bigint) === giftNicks) {
-      return out.name.first as Digest;
-    }
-  }
-  throw new Error("HTLC gift output not found in lock transaction outputs");
-}
-
-/**
- * Note `name.first` for the HTLC gift output (what the buyer claims).
- * Depends on the input note parent hash — only known once the funding note is chosen.
- */
-export async function htlcGiftOutputFirstName(params: {
-  hNock: Digest;
-  buyerPkh: Digest;
-  sellerPkh: Digest;
-  refundHeight: bigint;
-  giftNicks: bigint;
-  inputNote: Note;
-  /** Override the gift output's parent_hash (default: hash of inputNote). The
-   *  output first name depends on this, not on the input note's identity — so a
-   *  verifier can recompute it with any input note + the seller's parentHash. */
-  parentHash?: Digest;
-  /** Pkh the input note is locked to (default: sellerPkh). */
-  inputPkh?: Digest;
-}): Promise<Digest> {
-  await initIrisWasm();
-  const Iris = await getIrisWasm();
-
-  const lockRootDigest = await htlcLockRootDigest(
-    params.hNock,
-    params.buyerPkh,
-    params.sellerPkh,
-    params.refundHeight
-  );
-
-  const parentHash = params.parentHash ?? Iris.noteHash(params.inputNote);
-  const inputLock = lockFromList([
-    Iris.spendConditionNewPkh(pkhSingle((params.inputPkh ?? params.sellerPkh) as never)),
-  ]);
-  const spend = new Iris.SpendBuilder(
-    params.inputNote,
-    inputLock,
-    0,
-    inputLock
-  );
-  spend.seed({
-    lock_root: lockRootDigest,
-    note_data: Iris.noteDataEmpty(),
-    gift: String(params.giftNicks),
-    parent_hash: parentHash,
-  } as never);
-  spend.computeRefund(false);
-
-  const settings = Iris.txEngineSettingsV1BythosDefault();
-
-  const builder = new Iris.TxBuilder(settings);
-  builder.spend(spend);
-  builder.recalcAndSetFee(false);
-
-  const raw = Iris.nockchainTxToRawTx(builder.build());
-  const outputs = Iris.rawTxV1Outputs(raw, 0, settings);
-  return giftOutputFirstNameFromLockOutputs(outputs, params.giftNicks);
-}
-
-
+export {
+  giftOutputFirstNameFromLockOutputs,
+  htlcGiftOutputFirstName,
+  htlcLockRootDigest,
+  htlcOrLock,
+} from "@nockchain/rose-ts";
 
 export const BASE58_DIGEST_RE = /^[1-9A-HJ-NP-Za-km-z]{50,55}$/;
 /** Any plausible base58 (for the "any long-decodable string" safety net). */
 const BASE58_ANY_RE = /^[1-9A-HJ-NP-Za-km-z]+$/;
 
-/** True when iris-wasm already panicked (subsequent wasm calls will fail). */
-export function isIrisWasmPanic(err: unknown): boolean {
+/** True when a crypto library already panicked (subsequent calls may fail). */
+export function isRoseWasmPanic(err: unknown): boolean {
   const msg =
     err instanceof Error
       ? `${err.message}\n${err.stack ?? ""}`
@@ -157,9 +22,6 @@ export function isIrisWasmPanic(err: unknown): boolean {
     msg
   );
 }
-
-
-
 
 /** Decode base58 that should be a 40-byte Tip5 digest. */
 export function decodeBase58DigestBytes(b58: string): Uint8Array | null {
@@ -186,7 +48,6 @@ export function assertAllDigestsAnywhere(obj: unknown, where: string): void {
   if (o?.injectedBad) {
     throw new Error(`${where} injectedBad decodes to >40 bytes (max 40)`);
   }
-  // Light check: if a lock_root / first / last / id field contains a long non-digest base58, complain.
   const walk = (v: unknown, p: string): void => {
     if (typeof v === "string") {
       if (/lock_root|first|last|id/i.test(p) && BASE58_ANY_RE.test(v) && v.length > 40) {
@@ -205,4 +66,3 @@ export function assertAllDigestsAnywhere(obj: unknown, where: string): void {
   };
   walk(obj, where);
 }
-

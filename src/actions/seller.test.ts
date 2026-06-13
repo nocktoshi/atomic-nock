@@ -1,13 +1,13 @@
 import { describe, it, expect, vi } from "vitest";
 
-// Both nock modules transitively load @nockbox/iris-wasm, which can't resolve
+// Nock modules use @nockchain/rose-ts (no wasm init required).
 // in the Node.js test environment. Mock them out — tests inject all deps
 // explicitly, so the real implementations are never called.
 vi.mock("../nock/balance.js", () => ({ isPlausibleWalletAddress: () => true }));
 vi.mock("../nock/tx.js", () => ({ assertBase58Digest: () => {} }));
 
 import type { Hex, Address } from "viem";
-import type { Digest } from "@nockbox/iris-sdk/wasm";
+import type { Digest } from "@nockchain/rose-ts";
 import type { SwapPublic } from "../swap.js";
 import {
   generateSwapAction,

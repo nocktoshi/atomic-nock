@@ -1,6 +1,6 @@
 import { keccak256, type Hex, type Address } from "viem";
-import { initRoseWasm, hashPreimage, jam, tasBelts } from "./rose.js";
-import type { Digest } from '@nockbox/iris-sdk/wasm'
+import { hashPreimage, jam, tasBelts } from "@nockchain/rose-ts";
+import type { Digest } from '@nockchain/rose-ts'
 
 /**
  * Shared swap bundle (no preimage — revealed on Base withdraw). Persisted as JSON
@@ -66,7 +66,6 @@ export async function generateSwapSecret(): Promise<{
   preimageJam: Uint8Array;
   secretHex: string;
 }> {
-  await initRoseWasm();
   const bytes = crypto.getRandomValues(new Uint8Array(32));
   const hex = [...bytes].map((b) => b.toString(16).padStart(2, "0")).join("");
   const noun = tasBelts(hex);
@@ -78,7 +77,6 @@ export async function computeHashes(preimageJam: Uint8Array): Promise<{
   hNock: Digest;
   hEvm: Hex;
 }> {
-  await initRoseWasm();
   // hNock must be the node's STRUCTURAL hash-noun (hash-varlen per belt leaf +
   // hash-ten-cell per cell), NOT iris `hashNoun` (hash-varlen over the whole noun),
   // or the HTLC hax check `=(h (hash-noun u.preimage))` can never match. See
@@ -171,8 +169,6 @@ export async function assertPreimageMatchesHNock(
   preimageJam: Uint8Array,
   hNock: Digest
 ): Promise<void> {
-  await initRoseWasm();
-
   const got = hashPreimage(preimageJam);
   if (got !== hNock) {
     throw new Error(

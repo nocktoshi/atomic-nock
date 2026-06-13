@@ -6,8 +6,8 @@ export default defineConfig({
     testTimeout: 120_000,
     server: {
       deps: {
-        // iris-sdk / rose-wasm use extensionless internal imports and .wasm assets.
-        inline: [/@nockbox/, /@nockchain/],
+        // @nockchain/rose-ts is pure TS; inline for vitest module resolution.
+        inline: [/@nockchain/],
       },
     },
   },

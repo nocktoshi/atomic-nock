@@ -1,6 +1,6 @@
 // Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
 
-exports[`parity export > matches golden vectors from the original implementation 1`] = `
+exports[`parity export > matches golden vectors from rose-ts 1`] = `
 {
   "encodeSwapParams": {
     "json": "{"hNock":"8XiEzPMGNQp29EwSdtGhHsyEmXsDR2AkZfuTWCfydWVA8XbKsLk7BGo","hEvm":"0xEvM","sellerPkh":"gFz59ms5byUAp4kbgatYHZFve3ZxMSqspGPUVweyP1u4XQCzLjsdKp","buyerPkh":"ey4Lwommv6EeDfZzMrNKf7pJzShfoiCxJh7hEcoKu9TfzaXxngcwHJ","sellerEth":"0xSeller","buyerEth":"0xBuyer","usdcAmount":"1.5","birthOutputIndex":2,"nockLockTxId":"0xnl","nockGift":"65536","nockRefundHeight":"1000","usdcTimelock":"5000"}",

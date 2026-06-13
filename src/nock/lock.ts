@@ -1,12 +1,10 @@
-import { DEFAULT_FEE_PER_WORD } from "../iris.js";
-import { getIrisWasm, initIrisWasm, type Lock } from "../iris.js";
-import { Digest } from '@nockbox/iris-sdk/wasm'
+import { TxEngineSettings, Digest, lockFromList, nockchainTxToRawTx, noteDataEmpty, noteHash, pkhSingle, rawTxTotalFees, rawTxV1Outputs, SpendBuilder, spendConditionNewPkh, TxBuilder, txEngineSettingsV1BythosDefault } from '@nockchain/rose-ts'
 import {
   htlcLockRootDigest,
   htlcGiftOutputFirstName,
   giftOutputFirstNameFromLockOutputs,
 } from "./tx.js";
-import { signAndSendIrisTx, type NockWalletSession } from "./wallet.js";
+import { signAndSendRoseTx, type NockWalletSession } from "./wallet.js";
 import { fetchWalletNotes, pickLargestNote } from "./balance.js";
 import { runStep } from "../grpc.js";
 
@@ -25,7 +23,7 @@ export interface ConsolidateResult {
  * many small notes can't fund a lock even if the total is sufficient. This sweeps
  * all notes back to the seller's own address: a 1-nick output goes to the wallet
  * and the remainder (total − fee) lands in the refund/change note — one note ≥ the
- * total minus the network fee. `signAndSendIrisTx` calls `recalcAndSetFee`, which
+ * total minus the network fee. `signAndSendRoseTx` calls `recalcAndSetFee`, which
  * sizes the fee and balances that refund, so no fee estimate is needed here.
  */
 export async function consolidateNotes(
@@ -40,7 +38,7 @@ export async function consolidateNotes(
   if (notes.length < 2) {
     throw new Error(
       `Nothing to consolidate — wallet has ${notes.length} note(s) at ${query}. ` +
-        `Consolidation needs at least 2 notes.`
+      `Consolidation needs at least 2 notes.`
     );
   }
   const totalNicks = notes.reduce((sum, n) => sum + n.assets, 0n);
@@ -51,30 +49,22 @@ export async function consolidateNotes(
   // Reserve enough to cover the network fee so the spend can balance. The recipient
   // output carries the bulk (a value we set explicitly, so it never depends on the
   // engine's refund math); any reserve not spent on fee comes back as a small change
-  // note (NOT lost). recalcAndSetFee (inside signAndSendIrisTx) sets the real fee.
+  // note (NOT lost). recalcAndSetFee (inside signAndSendRoseTx) sets the real fee.
   const feeReserve = nicks(2n + BigInt(notes.length) * 2n);
   const gift = totalNicks - feeReserve;
   if (gift <= 0n) {
     throw new Error(
       `Balance too low to consolidate — ${fmt(totalNicks)} NOCK across ${notes.length} ` +
-        `note(s) doesn't cover the network fee.`
+      `note(s) doesn't cover the network fee.`
     );
   }
 
   return runStep(`Consolidate ${notes.length} notes`, async () => {
-    await initIrisWasm();
-    const Iris = await getIrisWasm();
-
-    const settings = Iris.txEngineSettingsV1BythosDefault();
-    if (BigInt(settings.cost_per_word) !== DEFAULT_FEE_PER_WORD) {
-      settings.cost_per_word = String(DEFAULT_FEE_PER_WORD) as typeof settings.cost_per_word;
-    }
-    const builder = new Iris.TxBuilder(settings);
+    // TODO: verify we dont need  DEFAULT_FEE_PER_WORD = 32768n; 
+    const builder = new TxBuilder(txEngineSettingsV1BythosDefault());
 
     // Every input note is p2pkh-locked to this wallet.
-    const inputLock = Iris.lockFromList([
-      Iris.spendConditionNewPkh(Iris.pkhSingle(sellerPkh as never)),
-    ]) as Lock;
+    const inputLock = lockFromList([spendConditionNewPkh(pkhSingle(sellerPkh))]);
     const inputNotes = notes.map((n) => n.note);
     const txLocks = inputNotes.map(() => ({ lock: inputLock, lock_sp_index: 0 }));
 
@@ -99,13 +89,13 @@ export async function consolidateNotes(
     // refuse BEFORE signing. This is fee-magnitude-independent: any honest fee,
     // however large, passes; only a gap beyond the declared fee fails.
     const checkTx = builder.build();
-    const checkRaw = Iris.nockchainTxToRawTx(checkTx);
-    const checkOuts = Iris.rawTxV1Outputs(checkRaw, 0, settings);
+    const checkRaw = nockchainTxToRawTx(checkTx);
+    const checkOuts = rawTxV1Outputs(checkRaw, 0, txEngineSettingsV1BythosDefault());
     const outSum = checkOuts.reduce(
       (s, o) => s + BigInt(o.assets as string | number | bigint),
       0n
     );
-    const declaredFee = BigInt(Iris.rawTxTotalFees(checkRaw));
+    const declaredFee = BigInt(rawTxTotalFees(checkRaw));
     const gap = totalNicks - outSum; // inputs − outputs; must equal declaredFee
     const burnedBeyondFee = gap - declaredFee;
     const TOLERANCE = 65536n; // 1 NOCK slack for rounding
@@ -117,12 +107,12 @@ export async function consolidateNotes(
     ) {
       throw new Error(
         `Refusing to consolidate: value not conserved — ${fmt(outSum)} NOCK out + ` +
-          `${fmt(declaredFee)} NOCK declared fee ≠ ${fmt(totalNicks)} NOCK in ` +
-          `(${fmt(burnedBeyondFee)} NOCK would be burned beyond the fee). Not signing.`
+        `${fmt(declaredFee)} NOCK declared fee ≠ ${fmt(totalNicks)} NOCK in ` +
+        `(${fmt(burnedBeyondFee)} NOCK would be burned beyond the fee). Not signing.`
       );
     }
 
-    const txId = await signAndSendIrisTx(wallet, builder, inputNotes);
+    const txId = await signAndSendRoseTx(wallet, builder, inputNotes);
     return { txId, noteCount: notes.length, totalNicks };
   });
 }
@@ -137,7 +127,7 @@ export interface LockNockResult {
 }
 
 export type LockNockPreview = {
-  /** HTLC gift output `name.first` — buyer claim address (Iris shows ~gift NOCK here). */
+  /** HTLC gift output `name.first` — buyer claim address (Rose shows ~gift NOCK here). */
   giftOutputFirstName: Digest;
   /** HTLC OR lock tree root (not a note address; do not use for balance/claim). */
   lockRoot: Digest;
@@ -148,14 +138,14 @@ export type LockNockPreview = {
 export async function lockNock(
   wallet: NockWalletSession,
   params: {
-  /** Seller nockblocks wallet address (base58); must match swap `sellerPkh` after lock. */
-  walletAddress: Digest;
-  buyerPkh: Digest;
-  gift: bigint;
-  hNock: Digest;
-  refundHeight: bigint;
-  /** Pre-lock swap JSON may omit this or wrongly set it to the lock root. */
-  swapLockFirstName?: Digest;
+    /** Seller nockblocks wallet address (base58); must match swap `sellerPkh` after lock. */
+    walletAddress: Digest;
+    buyerPkh: Digest;
+    gift: bigint;
+    hNock: Digest;
+    refundHeight: bigint;
+    /** Pre-lock swap JSON may omit this or wrongly set it to the lock root. */
+    swapLockFirstName?: Digest;
   }
 ): Promise<LockNockResult & { preview: LockNockPreview }> {
   const sellerPkh = params.walletAddress;
@@ -196,7 +186,7 @@ export async function lockNock(
   ) {
     throw new Error(
       `Swap lockFirstName (${params.swapLockFirstName.slice(0, 12)}…) does not match ` +
-        `HTLC gift output (${predictedGiftFirst.slice(0, 12)}…). Regenerate swap or re-enter seller address.`
+      `HTLC gift output (${predictedGiftFirst.slice(0, 12)}…). Regenerate swap or re-enter seller address.`
     );
   }
 
@@ -207,23 +197,18 @@ export async function lockNock(
   };
 
   return runStep("Build, sign, and send lock tx", async () => {
-    await initIrisWasm();
-    const Iris = await getIrisWasm();
-
     const lockRootDigest = lockRoot;
 
-    const parentHash = Iris.noteHash(inputNote);
+    const parentHash = noteHash(inputNote);
 
-    const inputLock = Iris.lockFromList([
-      Iris.spendConditionNewPkh(Iris.pkhSingle(sellerPkh as never)),
-    ]) as Lock;
+    const inputLock = lockFromList([spendConditionNewPkh(pkhSingle(sellerPkh))]);
     const refundLock = inputLock;
 
-    const spend = new Iris.SpendBuilder(inputNote, inputLock, 0, refundLock);
+    const spend = SpendBuilder.new(inputNote, inputLock, 0, refundLock);
 
     const htlcSeed = {
       lock_root: lockRootDigest,
-      note_data: Iris.noteDataEmpty(),
+      note_data: noteDataEmpty(),
       gift: String(params.gift),
       parent_hash: parentHash,
     } as never;
@@ -235,27 +220,23 @@ export async function lockNock(
       );
     }
 
-    const settings = Iris.txEngineSettingsV1BythosDefault();
-    if (BigInt(settings.cost_per_word) !== DEFAULT_FEE_PER_WORD) {
-      settings.cost_per_word = String(DEFAULT_FEE_PER_WORD) as typeof settings.cost_per_word;
-    }
-    const builder = new Iris.TxBuilder(settings);
+    const builder = new TxBuilder(txEngineSettingsV1BythosDefault());
     builder.spend(spend);
     builder.recalcAndSetFee(false);
 
     // Extract lockFirstName using iris raw outputs (prediction matches real)
     const tempTx = builder.build();
-    const tempRaw = Iris.nockchainTxToRawTx(tempTx);
-    const tempOuts = Iris.rawTxV1Outputs(tempRaw, 0, settings);
+    const tempRaw = nockchainTxToRawTx(tempTx);
+    const tempOuts = rawTxV1Outputs(tempRaw, 0, txEngineSettingsV1BythosDefault());
     const lockFirstName = giftOutputFirstNameFromLockOutputs(tempOuts, params.gift);
     if (lockFirstName !== predictedGiftFirst) {
       throw new Error(
         `Built HTLC gift output ${lockFirstName.slice(0, 12)}… disagrees with preview ` +
-          `${predictedGiftFirst.slice(0, 12)}…`
+        `${predictedGiftFirst.slice(0, 12)}…`
       );
     }
 
-    const txId = await signAndSendIrisTx(wallet, builder, [inputNote]);
+    const txId = await signAndSendRoseTx(wallet, builder, [inputNote]);
     // parentHash was computed earlier in the step (line ~98) from the inputNote.
     // tempOuts is from the verification temp build in this step.
     // Find the output index of the gift for the birth source the buyer will need.

@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import type { Hex, Address } from "viem";
-import type { Digest } from "@nockbox/iris-sdk/wasm";
+import type { Digest } from "@nockchain/rose-ts";
 import { encodeSwapParams, decodeSwapParams, type SwapPublic } from "./swap.js";
 
 function makeSwap(over: Partial<SwapPublic> = {}): SwapPublic {

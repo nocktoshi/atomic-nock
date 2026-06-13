@@ -1,15 +1,13 @@
 /**
  * Signer-independent halves of the Nockchain tx pipeline. The browser flow is
- *   prepareBuiltTx → Iris extension nock_signTx → finalizeAndBroadcast
+ *   prepareBuiltTx → Rose extension nock_signTx → finalizeAndBroadcast
  * and the solver daemon's is
  *   prepareBuiltTx → TxBuilder.fromNockchainTx(tx).sign(PrivateKey) → finalizeAndBroadcast
- * Extracted verbatim from signAndSendIrisTx (wallet.ts) — the browser flow is
+ * Extracted verbatim from signAndSendRoseTx (wallet.ts) — the browser flow is
  * the behavioral oracle; do not change semantics here without parity-testing.
  */
 import { formatGrpcError } from "../grpc.js";
-import type { getIrisWasm, NockchainTx, Note } from "../iris.js";
-import { getRoseWasm } from "../rose.js";
-import type { PbCom2RawTransaction, RawTxV1 } from "@nockchain/rose-wasm";
+import { nockchainTxToRawTx, rawTxToProtobuf, rawTxV1CalcId, TxBuilder, type NockchainTx, type Note, type PbCom2RawTransaction, type RawTxV1 } from "@nockchain/rose-ts";
 
 type MutableRecord = Record<string, unknown>;
 
@@ -17,11 +15,9 @@ function asMutable(value: unknown): MutableRecord {
   return value as unknown as MutableRecord;
 }
 
-type IrisTxBuilder = InstanceType<Awaited<ReturnType<typeof getIrisWasm>>["TxBuilder"]>;
-
 /** The two gRPC calls the broadcast path needs (structural, so any client fits). */
 export interface GrpcLike {
-  sendTransaction(tx: PbCom2RawTransaction): Promise<unknown>;
+  sendTransaction(tx: NockchainTx): Promise<unknown>;
   transactionAccepted(txId: string): Promise<boolean>;
 }
 
@@ -88,7 +84,7 @@ export async function waitTxAccepted(
  * created under an OR lock) and hax preimages synced onto the spend witnesses.
  */
 export function prepareBuiltTx(
-  builder: IrisTxBuilder,
+  builder: TxBuilder,
   inputNotes: Note[] = []
 ): NockchainTx {
   let nockTx: NockchainTx;
@@ -214,14 +210,13 @@ export async function finalizeAndBroadcast(
   // Use rose-wasm for the id calc: its Witness::hash hashes the hax preimage with
   // the STRUCTURAL hash-noun (matching the node's ++hash-noun), so rawTxV1CalcId
   // produces the exact id the node expects.
-  const Rose = await getRoseWasm();
-  const raw = Rose.nockchainTxToRawTx(signedNockTx);
+  const raw = nockchainTxToRawTx(signedNockTx);
 
-  const correctedId = Rose.rawTxV1CalcId(raw);
+  const correctedId = rawTxV1CalcId(raw);
   const rawWithId = { ...raw, id: correctedId } as RawTxV1;
   console.debug("txn id (rose rawTxV1CalcId): ", correctedId);
 
-  const pb = { ...Rose.rawTxToProtobuf(rawWithId), id: correctedId } as PbCom2RawTransaction;
+  const pb = { ...rawTxToProtobuf(rawWithId), id: correctedId } as PbCom2RawTransaction;
 
   const txId = pb.id || "unknown-tx-id";
 
@@ -229,7 +224,8 @@ export async function finalizeAndBroadcast(
   console.log('pb (raw, may not be fully serializable):', pb);
   console.dir(pb, { depth: 5 });
 
-  await grpc.sendTransaction(pb);
+  const txForSend = { ...signedNockTx, id: correctedId } as NockchainTx;
+  await grpc.sendTransaction(txForSend);
 
   console.warn("broadcast txId", txId);
 

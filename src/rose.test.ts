@@ -1,39 +1,13 @@
 /**
- * Parity golden vectors: run the ORIGINAL TS implementation (iris-sdk / rose-wasm)
- * and snapshot protocol-critical outputs. This is the oracle for the migration's
- * correctness — no live Nockchain node needed.
- *
- * Inputs are derived the SAME way the Rust tests derive them (golden hax jam for
- * hNock; hashPublicKey of all-0x00 / all-0x01 97-byte keys for the pkhs), so both
- * sides start from identical bytes.
+ * Parity golden vectors for protocol-critical rose-ts outputs.
  */
 import { describe, it, expect } from "vitest";
-import { readFileSync } from "node:fs";
-import { fileURLToPath } from "node:url";
 import { keccak256 } from "viem";
-
-// The iris/rose wasm-bindgen packages are built for the web (`init()` fetches the
-// .wasm). Node's fetch can't load file:// URLs, so serve local .wasm from disk —
-// lets the app's unmodified initRoseWasm/initIrisWasm work under vitest.
-const realFetch = globalThis.fetch;
-globalThis.fetch = (async (input: unknown, init?: unknown) => {
-  const url =
-    typeof input === "string"
-      ? input
-      : (input as URL).href ?? (input as Request).url ?? String(input);
-  if (url.startsWith("file://") && url.endsWith(".wasm")) {
-    const bytes = readFileSync(fileURLToPath(url));
-    return new Response(bytes, { headers: { "content-type": "application/wasm" } });
-  }
-  return (realFetch as (i: unknown, n?: unknown) => Promise<Response>)(input, init);
-}) as typeof fetch;
-import { initRoseWasm, hashPreimage } from "./rose.js";
-import { hashPublicKey } from "@nockchain/rose-wasm";
+import { hashPreimage, hashPublicKey } from "@nockchain/rose-ts";
 import { htlcLockRootDigest } from "./nock/tx.js";
 import { encodeSwapParams } from "./swap.js";
 import { toAtomic } from "./evm/htlc.js";
 
-// A real HTLC hax preimage jam (the golden from the rose-rs fix/hax-hash test).
 const GOLDEN_JAM = [
   1, 4, 94, 58, 17, 242, 138, 59, 221, 17, 3, 236, 145, 212, 172, 51, 41, 91, 17, 50, 64, 143, 128,
   4, 27, 38, 225, 48, 160, 7, 16, 192, 24, 8, 250, 63, 48, 130, 139, 12, 240, 187, 33, 147, 240,
@@ -42,21 +16,19 @@ const GOLDEN_JAM = [
 ];
 
 describe("parity export", () => {
-  it("matches golden vectors from the original implementation", async () => {
-    await initRoseWasm();
-
+  it("matches golden vectors from rose-ts", () => {
     const jam = Uint8Array.from(GOLDEN_JAM);
     const hNock = hashPreimage(jam) as unknown as string;
     const buyerPkh = hashPublicKey(new Uint8Array(97).fill(0)) as unknown as string;
     const sellerPkh = hashPublicKey(new Uint8Array(97).fill(1)) as unknown as string;
     const refundHeight = 1000;
 
-    const lockRoot = (await htlcLockRootDigest(
+    const lockRoot = htlcLockRootDigest(
       hNock as never,
       buyerPkh as never,
       sellerPkh as never,
       BigInt(refundHeight)
-    )) as unknown as string;
+    ) as unknown as string;
 
     const swap = {
       hNock: hNock as never,

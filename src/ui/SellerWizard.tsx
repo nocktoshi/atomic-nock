@@ -7,7 +7,7 @@ import {
   type SetStateAction,
 } from "react";
 import type { Address } from "viem";
-import type { Digest } from "@nockbox/iris-sdk/wasm";
+import type { Digest } from "@nockchain/rose-ts";
 import type { SwapPublic, DraftSwap } from "../swap.js";
 import type { NockWalletSession } from "../nock/wallet.js";
 import type { SwapRepository } from "../app/repo/swap-repo.js";

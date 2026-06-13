@@ -1,7 +1,7 @@
 /** Dashboard — your swaps AND open buy orders (bids), merged into one list. */
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import type { Digest } from "@nockbox/iris-sdk/wasm";
+import type { Digest } from "@nockchain/rose-ts";
 import type { Hex } from "viem";
 import type { SwapPublic } from "../swap.js";
 import type { Role } from "../app/roles.js";

@@ -1,12 +1,12 @@
 import { base58 } from "@scure/base";
-import { getIrisWasm, initIrisWasm, pkhSingle, type Note, type Digest } from "../iris.js";
+import {  pkhSingle, type Note, type Digest } from "@nockchain/rose-ts";
 import {
   assertBase58Digest,
   BASE58_DIGEST_RE,
   htlcLockRootDigest,
   htlcGiftOutputFirstName,
 } from "./tx.js";
-import { Nicks } from '@nockbox/iris-sdk/wasm'
+import { Nicks, noteFromProtobuf, spendConditionNewPkh, spendConditionFirstName } from '@nockchain/rose-ts'
 import type { NockWalletSession } from "./wallet.js";
 import {
   NOCK_BLOCK_SECONDS,
@@ -16,47 +16,6 @@ import {
 
 
 const NICKS_PER_NOCK = 65536n;
-
-/** Reuse recent balance RPC results — many UI pollers hit the same first name. */
-const BALANCE_CACHE_TTL_MS = 15_000;
-
-type BalanceRpcResult = Awaited<
-  ReturnType<NockWalletSession["grpc"]["getBalanceByFirstName"]>
->;
-
-const balanceCache = new Map<string, { result: BalanceRpcResult; at: number }>();
-const balanceInflight = new Map<string, Promise<BalanceRpcResult>>();
-
-function balanceCacheKey(wallet: NockWalletSession, firstName: string): string {
-  return `${wallet.pkh}:${firstName}`;
-}
-
-async function getBalanceByFirstNameCached(
-  wallet: NockWalletSession,
-  firstName: string
-): Promise<BalanceRpcResult> {
-  const key = balanceCacheKey(wallet, firstName);
-  const now = Date.now();
-  const hit = balanceCache.get(key);
-  if (hit && now - hit.at < BALANCE_CACHE_TTL_MS) return hit.result;
-
-  const pending = balanceInflight.get(key);
-  if (pending) return pending;
-
-  const p = wallet.grpc
-    .getBalanceByFirstName(firstName)
-    .then((result) => {
-      balanceCache.set(key, { result, at: Date.now() });
-      balanceInflight.delete(key);
-      return result;
-    })
-    .catch((err) => {
-      balanceInflight.delete(key);
-      throw err;
-    });
-  balanceInflight.set(key, p);
-  return p;
-}
 
 /** gRPC balance row shape (wire protobuf); convert once via `noteFromGrpcBalance`. */
 export type GrpcBalanceEntry = { note?: unknown | null };
@@ -115,9 +74,7 @@ function assertNoteName(note: Note, context: string): void {
 
 /** Single conversion point: gRPC protobuf note → native `Note`. */
 export async function noteFromGrpcBalance(grpcNote: unknown): Promise<Note> {
-  await initIrisWasm();
-  const Iris = await getIrisWasm();
-  const note = Iris.noteFromProtobuf(grpcNote as never);
+  const note = noteFromProtobuf(grpcNote as never);
   assertNoteName(note, "Balance note");
   return note;
 }
@@ -162,10 +119,10 @@ export function pickLargestNote(
     const detail =
       total >= minAssetsNicks
         ? `Your largest single note is ${fmt(largest)} NOCK, but you hold ${fmt(total)} NOCK ` +
-          `across ${entries.length} note(s). The lock spends one note, so consolidate your notes ` +
-          `into a single note of at least ${need} NOCK (or lower the gift amount).`
+        `across ${entries.length} note(s). The lock spends one note, so consolidate your notes ` +
+        `into a single note of at least ${need} NOCK (or lower the gift amount).`
         : `You hold ${fmt(total)} NOCK total across ${entries.length} note(s) — less than the ` +
-          `${need} NOCK needed. Fund the wallet or lower the gift amount.`;
+        `${need} NOCK needed. Fund the wallet or lower the gift amount.`;
     throw new Error(`No note with at least ${need} NOCK. ${detail}`);
   }
 
@@ -194,10 +151,8 @@ export function pickSmallestFeeNote(
 export async function firstNameFromWalletKey(walletKey: string): Promise<Digest> {
   const key = walletKey.trim();
   assertBase58Digest("wallet key", key);
-  await initIrisWasm();
-  const Iris = await getIrisWasm();
-  const spendCondition = Iris.spendConditionNewPkh(pkhSingle(key as never));
-  return Iris.spendConditionFirstName(spendCondition) as Digest;
+  const spendCondition = spendConditionNewPkh(pkhSingle(key as never));
+  return spendConditionFirstName(spendCondition) as Digest;
 }
 
 /**
@@ -212,8 +167,8 @@ export async function fetchCurrentBlockHeight(
   if (!key) return undefined;
   try {
     const firstName = await firstNameFromWalletKey(key);
-    const balance = await getBalanceByFirstNameCached(wallet, firstName);
-    const h = balance?.height?.value;
+    const balance = await wallet.grpc.getBalanceByFirstName(firstName);
+    const h = balance?.height;
     if (h == null) return undefined;
     return BigInt(h);
   } catch {
@@ -226,9 +181,9 @@ export async function fetchNotesByFirstName(
   wallet: NockWalletSession,
   firstName: Digest
 ): Promise<{ notes: BalanceEntry[]; height?: string }> {
-  const balance = await getBalanceByFirstNameCached(wallet, firstName);
+  const balance = await wallet.grpc.getBalanceByFirstName(firstName);
   const notes = await parseBalanceEntries(balance?.notes ?? []);
-  return { notes, height: balance?.height?.value };
+  return { notes, height: balance?.height };
 }
 
 /**
@@ -265,8 +220,6 @@ export async function verifyNockLockConfirmed(
   }
 ): Promise<{ ok: boolean; reason?: string; fatal?: boolean }> {
   try {
-    await initIrisWasm();
-
     // 0. Cross-chain timelock safety — the NOCK refund must be comfortably AFTER
     //    the USDC refund (else a malicious seller can reclaim NOCK and still take
     //    the USDC). Anchored at lock time, since open swaps may have aged.
@@ -391,7 +344,7 @@ export async function fetchWalletNotes(
     const firstName = await firstNameFromWalletKey(key);
     tried.push(`firstName:${firstName.slice(0, 12)}…`);
     try {
-      const balance = await getBalanceByFirstNameCached(wallet, firstName);
+      const balance = await wallet.grpc.getBalanceByFirstName(firstName);
       const notes = await parseBalanceEntries(balance?.notes ?? []);
       if (notes.length > 0) {
         console.debug(`Balance: ${notes.length} note(s) via firstName ${firstName.slice(0, 12)}…`);

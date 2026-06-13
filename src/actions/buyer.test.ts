@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from "vitest";
 import type { Hex, Address } from "viem";
-import type { Digest } from "@nockbox/iris-sdk/wasm";
+import type { Digest } from "@nockchain/rose-ts";
 import type { SwapPublic } from "../swap.js";
 import {
   claimNockAction,
