@@ -244,6 +244,11 @@ export async function finalizeAndBroadcast(
   const correctedId = rawTxV1CalcId(raw);
   const rawWithId = { ...raw, id: correctedId } as RawTxV1;
   console.debug("txn id (rose rawTxV1CalcId): ", correctedId);
+  if (signedId && signedId !== correctedId) {
+    console.warn(
+      `tx id mismatch: signer declared ${signedId}, structural calc ${correctedId} — broadcasting with corrected id`
+    );
+  }
 
   const pb = { ...rawTxToProtobuf(rawWithId), id: correctedId } as PbCom2RawTransaction;
 
