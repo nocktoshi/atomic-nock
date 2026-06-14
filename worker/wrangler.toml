@@ -62,19 +62,4 @@ dead_letter_queue = "solver-out-dlq"
 name = "MARKET_DO"
 class_name = "Market"
 
-[[migrations]]
-tag = "v1"
-new_sqlite_classes = ["RfqBoard"]
-[[migrations]]
-tag = "v2"
-new_sqlite_classes = ["Market"]
-deleted_classes = ["RfqBoard"]
-
-# Bundle the rose-wasm verifier as a CompiledWasm module (server-side signature
-# verification). NOTE: the wasm is ~1MB gzipped — requires the Workers *Paid*
-# plan (10MB compressed limit; the free tier is 1MB).
-[[rules]]
-type = "CompiledWasm"
-globs = ["**/*.wasm"]
-fallthrough = true
 
