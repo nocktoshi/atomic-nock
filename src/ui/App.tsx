@@ -50,7 +50,6 @@ function BidRoute() {
 
 /** Home: unified solver swap box (buy ↔ sell via flipper). */
 function HomeRoute() {
-  const navigate = useNavigate();
   return (
     <>
       <TradeNav />
