@@ -9,6 +9,8 @@ APP_URL = "https://atomicnock.com"
 EMAIL_FROM = "notifications@atomicnock.com"
 TELEGRAM_BOT_NAME = "atomicnockbot"
 SOLVER_PKHS= "BUZWD8BdPehSUK7Er471SVLYsgbtAy9HwmpcfAckKxUL3RYHaf6RyGd"
+# Max ms a POST /solver/rfq is held open awaiting the solver's quote.
+RFQ_HOLD_MS = "8000"
 
 # NEAR Intents 1Click: app-fee revenue (a NEAR account + bps, 100 = 1%). The JWT
 # itself is a SECRET — set it with:  npx wrangler secret put ONECLICK_JWT
@@ -47,6 +49,13 @@ name = "RL_SOLVER"
 namespace_id = "1004"
 simple = { limit = 600, period = 60 }
 
+# Sized quote requests (POST /solver/rfq) — tighter than RL_READ so nobody can
+# hammer the solver for live rates. Per-IP; a debounced UI stays well under it.
+[[ratelimits]]
+name = "RL_RFQ"
+namespace_id = "1005"
+simple = { limit = 20, period = 60 }
+
 [[queues.producers]]
 binding = "SOLVER_IN"
 queue = "solver-in"
@@ -54,7 +63,9 @@ queue = "solver-in"
 [[queues.consumers]]
 queue = "solver-out"
 max_batch_size = 10
-max_batch_timeout = 2
+# Fire as soon as a message lands — an RFQ response must resolve the held POST
+# without waiting to batch (latency, not throughput, is what matters here).
+max_batch_timeout = 0
 max_retries = 5
 dead_letter_queue = "solver-out-dlq"
 

@@ -5,12 +5,12 @@
 import { DurableObject } from "cloudflare:workers";
 import type { SwapRecord } from "./contract.js";
 import type { PnlEntry, TrackedSwap, TrackedSwapPatch } from "../../src/solver-state.js";
-import type { RfqSide } from "../../src/market/solver-rfq.js";
+import type { RfqSide, SolverRfqResponse } from "../../src/market/solver-rfq.js";
 import {
   MarketCore,
   type BidRecord,
-  type BoardRfqRecord,
   type ImportPayload,
+  type RfqQuote,
 } from "./market.js";
 import { doMarketStorage } from "./market-do-storage.js";
 import { throwRpcError } from "./rpc-errors.js";
@@ -22,6 +22,26 @@ export class Market extends DurableObject<Env> {
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
     this.core = new MarketCore(doMarketStorage(ctx.storage));
+  }
+
+  /** Hold a sized RFQ until the solver answers over the queue (online-check +
+   *  rfq.created enqueue happen in awaitRfq; the rendezvous is in MarketCore). */
+  async awaitRfqResponse(
+    rfqId: string,
+    side: RfqSide,
+    amountIn: string,
+    holdMs: number
+  ): Promise<SolverRfqResponse> {
+    try {
+      return await this.core.awaitRfqResponse(rfqId, side, amountIn, holdMs);
+    } catch (e) {
+      throwRpcError(e);
+    }
+  }
+
+  /** Wake a held RFQ with the solver's quote (no-op if it already timed out). */
+  resolveRfqResponse(rfqId: string, quote: RfqQuote): void {
+    this.core.resolveRfqResponse(rfqId, quote);
   }
 
   async loadSwap(hEvm: string): Promise<SwapRecord | null> {
@@ -188,48 +208,6 @@ export class Market extends DurableObject<Env> {
   async online(): Promise<boolean> {
     try {
       return await this.core.online();
-    } catch (e) {
-      throwRpcError(e);
-    }
-  }
-
-  async createRfqRecord(side: RfqSide, amountIn: string): Promise<BoardRfqRecord | null> {
-    try {
-      return await this.core.createRfqRecord(side, amountIn);
-    } catch (e) {
-      throwRpcError(e);
-    }
-  }
-
-  async getRfqRecord(rfqId: string): Promise<BoardRfqRecord | null> {
-    try {
-      return await this.core.getRfqRecord(rfqId);
-    } catch (e) {
-      throwRpcError(e);
-    }
-  }
-
-  async listPendingRfqs(): Promise<BoardRfqRecord[]> {
-    try {
-      return await this.core.listPendingRfqs();
-    } catch (e) {
-      throwRpcError(e);
-    }
-  }
-
-  async respondRfq(
-    rfqId: string,
-    pkh: string,
-    body: {
-      status: "ready" | "rejected";
-      amountOut?: string;
-      pricePerNock?: number;
-      maxAmountIn?: string;
-      reason?: string;
-    }
-  ): Promise<BoardRfqRecord> {
-    try {
-      return await this.core.respondRfq(rfqId, pkh, body);
     } catch (e) {
       throwRpcError(e);
     }

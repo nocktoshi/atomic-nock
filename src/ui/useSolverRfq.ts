@@ -9,11 +9,10 @@ import type { RfqSide, SolverRfqResponse } from "../market/solver-rfq.js";
 
 /** Wait for typing to settle before posting a sized RFQ. */
 const DEBOUNCE_MS = 700;
-/** First poll soon after POST; solver may only see pending RFQs every POLL_MS. */
-const POLL_MS = 2_000;
-const POLL_INITIAL_DELAY_MS = 500;
-/** Fallback when the server omits expiresAt (worker uses ~55s logical TTL). */
-const POLL_FALLBACK_MS = 58_000;
+/** Client timeout — comfortably above the worker's RFQ_HOLD_MS hold (~8s). */
+const REQUEST_TIMEOUT_MS = 15_000;
+/** Bounded re-POSTs when the worker returns a transient busy/expired. */
+const MAX_ATTEMPTS = 2;
 
 export interface SolverRfqState {
   quote: SolverRfqResponse | null;
@@ -40,29 +39,14 @@ async function fetchStatus(): Promise<boolean> {
   return !!online;
 }
 
-async function createRfq(side: RfqSide, amountIn: string): Promise<SolverRfqResponse> {
-  const base = baseUrl();
-  if (!base) throw new Error("API not configured");
-  const res = await fetch(`${base}/solver/rfq`, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ side, amountIn }),
-  });
-  if (!res.ok) {
-    const err = (await res.json().catch(() => ({}))) as { error?: string };
-    throw new Error(err.error ?? `RFQ failed (${res.status})`);
-  }
-  return (await res.json()) as SolverRfqResponse;
-}
-
-function sleep(ms: number, signal: AbortSignal): Promise<void> {
+function sleep(ms: number, signal?: AbortSignal): Promise<void> {
   return new Promise((resolve, reject) => {
-    if (signal.aborted) {
+    if (signal?.aborted) {
       reject(new DOMException("aborted", "AbortError"));
       return;
     }
     const t = window.setTimeout(resolve, ms);
-    signal.addEventListener(
+    signal?.addEventListener(
       "abort",
       () => {
         window.clearTimeout(t);
@@ -73,40 +57,43 @@ function sleep(ms: number, signal: AbortSignal): Promise<void> {
   });
 }
 
-async function pollRfq(
-  id: string,
-  signal: AbortSignal,
-  expiresAt?: number
+/**
+ * POST a sized RFQ that the worker holds open until the solver answers over the
+ * queue — the response IS the quote (no polling). A transient `busy`/`expired`
+ * is re-POSTed a bounded number of times.
+ */
+async function postRfqHeld(
+  side: RfqSide,
+  amountIn: string,
+  signal?: AbortSignal
 ): Promise<SolverRfqResponse> {
   const base = baseUrl();
   if (!base) throw new Error("API not configured");
-  const deadline =
-    expiresAt != null && expiresAt > Date.now()
-      ? expiresAt + 1_000
-      : Date.now() + POLL_FALLBACK_MS;
-  await sleep(POLL_INITIAL_DELAY_MS, signal);
-  while (Date.now() < deadline) {
-    if (signal.aborted) throw new DOMException("aborted", "AbortError");
-    const res = await fetch(`${base}/solver/rfq/${encodeURIComponent(id)}`, { signal });
+  let last: SolverRfqResponse | null = null;
+  for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
+    if (signal?.aborted) throw new DOMException("aborted", "AbortError");
+    const timeout = AbortSignal.timeout(REQUEST_TIMEOUT_MS);
+    const res = await fetch(`${base}/solver/rfq`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ side, amountIn }),
+      signal: signal ? AbortSignal.any([signal, timeout]) : timeout,
+    });
     if (res.status === 429) {
       const retrySec = Number(res.headers.get("retry-after"));
-      await sleep(Number.isFinite(retrySec) && retrySec > 0 ? retrySec * 1000 : POLL_MS * 2, signal);
+      await sleep((Number.isFinite(retrySec) && retrySec > 0 ? retrySec : 1) * 1000, signal);
       continue;
     }
-    if (!res.ok) throw new Error(`RFQ poll failed (${res.status})`);
-    const rfq = (await res.json()) as SolverRfqResponse;
-    if (rfq.status !== "pending") return rfq;
-    const wait = Math.min(POLL_MS, Math.max(0, deadline - Date.now()));
-    if (wait <= 0) break;
-    await sleep(wait, signal);
+    if (!res.ok) {
+      const err = (await res.json().catch(() => ({}))) as { error?: string };
+      throw new Error(err.error ?? `RFQ failed (${res.status})`);
+    }
+    last = (await res.json()) as SolverRfqResponse;
+    if (last.status !== "busy" && last.status !== "expired") return last;
   }
-  return {
-    rfqId: id,
-    side: "buy",
-    status: "expired",
-    expiresAt: Date.now(),
-    reason: "quote timed out — try again",
-  };
+  return (
+    last ?? { rfqId: "", side, status: "expired", expiresAt: Date.now(), reason: "quote timed out — try again" }
+  );
 }
 
 /** Request a real quote when `amountIn` changes (debounced). */
@@ -157,18 +144,7 @@ export function useSolverRfq(side: RfqSide, amountIn: string): SolverRfqState {
     void (async () => {
       setFetching(true);
       try {
-        const created = await createRfq(side, debouncedAmount);
-        if (reqId.current !== id || ac.signal.aborted) return;
-        setOnline(created.status !== "offline");
-        if (created.status === "offline") {
-          setQuote(created);
-          return;
-        }
-        if (created.status !== "pending" || !created.rfqId) {
-          setQuote(created);
-          return;
-        }
-        const done = await pollRfq(created.rfqId, ac.signal, created.expiresAt);
+        const done = await postRfqHeld(side, debouncedAmount, ac.signal);
         if (reqId.current !== id || ac.signal.aborted) return;
         setOnline(done.status !== "offline");
         setQuote(done);
@@ -219,7 +195,5 @@ export async function requestSolverRfq(
   side: RfqSide,
   amountIn: string
 ): Promise<SolverRfqResponse> {
-  const created = await createRfq(side, amountIn);
-  if (created.status !== "pending" || !created.rfqId) return created;
-  return pollRfq(created.rfqId, new AbortController().signal);
+  return postRfqHeld(side, amountIn);
 }

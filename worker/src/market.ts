@@ -27,7 +27,7 @@ import {
 } from "./contract.js";
 import { SwapError } from "./errors.js";
 import type { PnlEntry, TrackedSwap, TrackedSwapPatch } from "../../src/solver-state.js";
-import type { RfqSide, RfqStatus } from "../../src/market/solver-rfq.js";
+import type { RfqSide, SolverRfqResponse } from "../../src/market/solver-rfq.js";
 
 // ── Storage seam (Map-backed fake in tests; DO storage in production) ─────────
 
@@ -46,7 +46,6 @@ const MINE_PREFIX = "mine:"; // participant index: mine:<pkh>:<hEvm>
 const BID_PREFIX = "bid:";
 const BID_FILLED_PREFIX = "bidswap:"; // tombstone: filled bid → swap hEvm
 const SOLVER_SWAP_PREFIX = "solver:"; // solver:<pkh>:swap:<hEvm>
-const RFQ_PREFIX = "rfq:";
 const HEARTBEAT_KEY = "heartbeat";
 
 const id = (hEvm: string) => hEvm.toLowerCase();
@@ -66,10 +65,8 @@ const RECORD_MAX_AGE_SEC = 30 * 24 * 3600;
 
 /** Solver must heartbeat within this window to count as online. */
 export const HEARTBEAT_MAX_AGE_MS = 90_000;
-/** An unanswered RFQ expires after this. */
+/** How long a returned RFQ quote stays actionable (held-POST flow). */
 const RFQ_TTL_MS = 45_000;
-/** Answered records linger briefly so the UI's next poll can read them. */
-const ANSWERED_LINGER_MS = 120_000;
 
 const REQUIRED_AT_CREATE = [
   "hEvm",
@@ -117,22 +114,6 @@ export interface BidRecord {
   version: number;
 }
 
-export interface BoardRfqRecord {
-  id: string;
-  side: RfqSide;
-  token: "USDC";
-  amountIn: string;
-  createdAt: number;
-  expiresAt: number;
-  status: RfqStatus;
-  amountOut?: string;
-  pricePerNock?: number;
-  maxAmountIn?: string;
-  reason?: string;
-  respondedAt?: number;
-  solverPkh?: string;
-}
-
 /** Payload for the one-time KV→DO migration. */
 export interface ImportPayload {
   swaps?: SwapRecord[];
@@ -161,11 +142,78 @@ const nowSec = () => Math.floor(Date.now() / 1000);
 
 // ── The Durable Object ────────────────────────────────────────────────────────
 
+/** Quote the solver-out consumer hands back to wake a held RFQ. */
+export interface RfqQuote {
+  status: "ready" | "rejected";
+  amountOut?: string;
+  pricePerNock?: number;
+  maxAmountIn?: string;
+  reason?: string;
+}
+
+/** Cap concurrent held RFQs so a stuck solver can't pin the DO active forever. */
+const RFQ_MAX_WAITERS = 200;
+
 export class MarketCore {
   private readonly storage: MarketStorage;
+  /** In-memory rendezvous for the event-based RFQ flow: a held POST awaits here
+   *  until the solver-out consumer calls resolveRfqResponse (or it times out).
+   *  Transient — never persisted, never polled. One DO instance = one map. */
+  private readonly rfqWaiters = new Map<
+    string,
+    { resolve: (q: RfqQuote | null) => void; timer: ReturnType<typeof setTimeout> }
+  >();
 
   constructor(storage: MarketStorage) {
     this.storage = storage;
+  }
+
+  /**
+   * Park a sized RFQ until the solver answers (via resolveRfqResponse) or `holdMs`
+   * elapses. The caller (awaitRfq) has already checked `online()` and enqueued
+   * `rfq.created`; the queue round-trip (≥ solver pull idle) guarantees the
+   * solver can't answer before this registers. Returns the public quote shape.
+   */
+  async awaitRfqResponse(
+    rfqId: string,
+    side: RfqSide,
+    amountIn: string,
+    holdMs: number
+  ): Promise<SolverRfqResponse> {
+    if (this.rfqWaiters.size >= RFQ_MAX_WAITERS) {
+      return { rfqId, side, amountIn, status: "busy", expiresAt: Date.now(), reason: "quote queue is full — try again" };
+    }
+    let settle!: (q: RfqQuote | null) => void;
+    const answered = new Promise<RfqQuote | null>((resolve) => { settle = resolve; });
+    const timer = setTimeout(() => {
+      this.rfqWaiters.delete(rfqId);
+      settle(null);
+    }, holdMs);
+    this.rfqWaiters.set(rfqId, {
+      resolve: (q) => { clearTimeout(timer); this.rfqWaiters.delete(rfqId); settle(q); },
+      timer,
+    });
+
+    const quote = await answered;
+    if (!quote) {
+      return { rfqId, side, amountIn, status: "expired", expiresAt: Date.now(), reason: "quote timed out — try again" };
+    }
+    return {
+      rfqId,
+      side,
+      amountIn,
+      status: quote.status,
+      amountOut: quote.amountOut,
+      pricePerNock: quote.pricePerNock,
+      maxAmountIn: quote.maxAmountIn,
+      reason: quote.reason,
+      expiresAt: Date.now() + RFQ_TTL_MS,
+    };
+  }
+
+  /** Wake a held RFQ with the solver's quote (no-op if it already timed out). */
+  resolveRfqResponse(rfqId: string, quote: RfqQuote): void {
+    this.rfqWaiters.get(rfqId)?.resolve(quote);
   }
 
   // ── Swaps (state machine moved IN — load→validate→write is atomic here) ────
@@ -496,75 +544,6 @@ export class MarketCore {
   async online(): Promise<boolean> {
     const hb = await this.storage.get<{ ts: number }>(HEARTBEAT_KEY);
     return !!hb && Date.now() - hb.ts < HEARTBEAT_MAX_AGE_MS;
-  }
-
-  async createRfqRecord(side: RfqSide, amountIn: string): Promise<BoardRfqRecord | null> {
-    if (!(await this.online())) return null;
-    const now = Date.now();
-    const rec: BoardRfqRecord = {
-      id: randomId(),
-      side,
-      token: "USDC",
-      amountIn,
-      createdAt: now,
-      expiresAt: now + RFQ_TTL_MS,
-      status: "pending",
-    };
-    await this.storage.put(RFQ_PREFIX + rec.id, rec);
-    return rec;
-  }
-
-  async getRfqRecord(rfqId: string): Promise<BoardRfqRecord | null> {
-    const rec = await this.storage.get<BoardRfqRecord>(RFQ_PREFIX + rfqId);
-    if (!rec) return null;
-    if (rec.status === "pending" && Date.now() > rec.expiresAt) rec.status = "expired";
-    return rec;
-  }
-
-  async listPendingRfqs(): Promise<BoardRfqRecord[]> {
-    const all = await this.storage.list<BoardRfqRecord>({ prefix: RFQ_PREFIX });
-    const now = Date.now();
-    const pending: BoardRfqRecord[] = [];
-    for (const [key, rec] of all) {
-      const cutoff =
-        rec.status === "pending"
-          ? rec.expiresAt
-          : (rec.respondedAt ?? rec.expiresAt) + ANSWERED_LINGER_MS;
-      if (now > cutoff) {
-        await this.storage.delete(key); // opportunistic cleanup
-        continue;
-      }
-      if (rec.status === "pending") pending.push(rec);
-    }
-    pending.sort((a, b) => a.createdAt - b.createdAt);
-    return pending;
-  }
-
-  async respondRfq(
-    rfqId: string,
-    pkh: string,
-    body: {
-      status: "ready" | "rejected";
-      amountOut?: string;
-      pricePerNock?: number;
-      maxAmountIn?: string;
-      reason?: string;
-    }
-  ): Promise<BoardRfqRecord> {
-    const key = RFQ_PREFIX + rfqId;
-    const rec = await this.storage.get<BoardRfqRecord>(key);
-    if (!rec) throw new SwapError(404, "rfq not found");
-    if (rec.status !== "pending") throw new SwapError(409, "rfq already answered");
-    if (Date.now() > rec.expiresAt) throw new SwapError(410, "rfq expired");
-    rec.status = body.status;
-    rec.respondedAt = Date.now();
-    rec.solverPkh = pkh;
-    if (body.amountOut != null) rec.amountOut = body.amountOut;
-    if (body.pricePerNock != null) rec.pricePerNock = body.pricePerNock;
-    if (body.maxAmountIn != null) rec.maxAmountIn = body.maxAmountIn;
-    if (body.reason != null) rec.reason = body.reason;
-    await this.storage.put(key, rec);
-    return rec;
   }
 
   // ── Sweep + import ──────────────────────────────────────────────────────────

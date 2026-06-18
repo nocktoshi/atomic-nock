@@ -24,6 +24,9 @@ export interface Env {
    *  bot's reads exhaust the anonymous per-IP bucket and starve browsers
    *  (locally they even share 127.0.0.1, stalling RFQs). */
   RL_SOLVER?: RateLimiter;
+  /** Per-IP cap on sized quote requests (POST /solver/rfq) — stricter than
+   *  RL_READ so the rate board can't be hammered. */
+  RL_RFQ?: RateLimiter;
   /** Market Durable Object — the strongly-consistent system of record for
    *  swaps, bids, RFQs, and solver state (KV is eventually consistent and
    *  transactionless; see market.ts). */
@@ -53,6 +56,8 @@ export interface Env {
   SOLVER_PKHS?: string;
   /** Work queue: RFQs, marketplace events, swap transitions → solver VPS pull. */
   SOLVER_IN?: Queue<SolverInboundEvent>;
+  /** Max ms the worker holds a POST /solver/rfq open awaiting the quote (var). */
+  RFQ_HOLD_MS?: string;
 }
 
 export { SwapError } from "./errors.js";

@@ -1,21 +1,21 @@
 import { describe, it, expect, beforeEach, vi, afterEach } from "vitest";
-import {
-  createRfq,
-  getRfq,
-  isSolverOnline,
-  listPendingRfqs,
-  respondRfq,
-  touchHeartbeat,
-} from "./solver-rfq.js";
+import { awaitRfq, isSolverOnline, touchHeartbeat } from "./solver-rfq.js";
 import { marketEnv, type MarketEnv } from "./testing.js";
+import type { SolverInboundEvent } from "./solver-events.js";
 
-/** The RFQ board now lives inside the Market DO; same routes, same semantics. */
-function fakeEnv(): MarketEnv & { boardRaw: Map<string, unknown> } {
+/** Event-based RFQ: POST is held in the Market DO until the solver answers over
+ *  the queue. No record is written; nothing is polled. */
+function fakeEnv(): MarketEnv & { boardRaw: Map<string, unknown>; sent: SolverInboundEvent[] } {
   const env = marketEnv();
-  return Object.assign(env, { boardRaw: env.raw });
+  const sent: SolverInboundEvent[] = [];
+  return Object.assign(env, {
+    boardRaw: env.raw,
+    sent,
+    SOLVER_IN: { send: async (e: SolverInboundEvent) => { sent.push(e); } },
+  });
 }
 
-describe("solver-rfq (Durable Object board)", () => {
+describe("solver-rfq (event-based, Durable Object board)", () => {
   let env: ReturnType<typeof fakeEnv>;
 
   beforeEach(() => {
@@ -30,88 +30,60 @@ describe("solver-rfq (Durable Object board)", () => {
 
   it("reports offline when no heartbeat", async () => {
     expect(await isSolverOnline(env)).toBe(false);
-    const rfq = await createRfq(env, { side: "buy", amountIn: "10" });
+  });
+
+  it("awaitRfq returns offline (no hold, no enqueue) when the solver is down", async () => {
+    const rfq = await awaitRfq(env, { side: "buy", amountIn: "10" }, 8000);
     expect(rfq.status).toBe("offline");
+    expect(env.sent).toHaveLength(0);
   });
 
-  it("creates pending RFQ when solver is online", async () => {
-    await touchHeartbeat(env, "SOLVER");
-    const rfq = await createRfq(env, { side: "buy", amountIn: "25.5" });
-    expect(rfq.status).toBe("pending");
-    expect(rfq.rfqId).toMatch(/^[0-9a-f]{32}$/);
-    expect(rfq.amountIn).toBe("25.5");
-    const pending = await listPendingRfqs(env);
-    expect(pending).toHaveLength(1);
-    expect(pending[0].id).toBe(rfq.rfqId);
+  it("awaitRfq rejects an invalid amount", async () => {
+    await expect(awaitRfq(env, { side: "buy", amountIn: "-1" }, 8000)).rejects.toThrow(/amountIn/);
   });
 
-  it("a fresh RFQ is visible to the pending poll IMMEDIATELY (the KV-list lag bug)", async () => {
+  it("awaitRfq enqueues rfq.created and resolves with the solver's quote", async () => {
+    vi.useRealTimers();
     await touchHeartbeat(env, "SOLVER");
-    const a = await createRfq(env, { side: "buy", amountIn: "1" });
-    const b = await createRfq(env, { side: "sell", amountIn: "2" });
-    const pending = await listPendingRfqs(env);
-    expect(pending.map((r) => r.id).sort()).toEqual([a.rfqId, b.rfqId].sort());
-  });
-
-  it("responds to RFQ with public fields only", async () => {
-    await touchHeartbeat(env, "SOLVER");
-    const created = await createRfq(env, { side: "sell", amountIn: "100" });
-    const answered = await respondRfq(env, created.rfqId, "SOLVER", {
+    const pending = awaitRfq(env, { side: "buy", amountIn: "10" }, 8000);
+    await new Promise((r) => setTimeout(r, 20)); // let online-check + enqueue land
+    expect(env.sent).toHaveLength(1);
+    const created = env.sent[0] as Extract<SolverInboundEvent, { type: "rfq.created" }>;
+    expect(created.type).toBe("rfq.created");
+    env.market.resolveRfqResponse(created.rfqId, {
       status: "ready",
-      amountOut: "450.25",
-      pricePerNock: 4.5025,
-      maxAmountIn: "200",
+      amountOut: "100",
+      pricePerNock: 0.1,
+      maxAmountIn: "250",
     });
-    expect(answered.status).toBe("ready");
-    expect(answered.amountOut).toBe("450.25");
-    expect(answered.pricePerNock).toBe(4.5025);
-    expect(answered.maxAmountIn).toBe("200");
-    expect(await listPendingRfqs(env)).toHaveLength(0);
-    const fetched = await getRfq(env, created.rfqId);
-    expect(fetched?.status).toBe("ready");
+    const q = await pending;
+    expect(q.status).toBe("ready");
+    expect(q.amountOut).toBe("100");
+    expect(q.rfqId).toBe(created.rfqId);
   });
 
-  it("keeps pending RFQ pending while awaiting solver (no mid-poll offline flip)", async () => {
-    await touchHeartbeat(env, "SOLVER");
-    const created = await createRfq(env, { side: "buy", amountIn: "10" });
-    env.boardRaw.delete("heartbeat");
-    const fetched = await getRfq(env, created.rfqId);
-    expect(fetched?.status).toBe("pending");
+  it("held RFQ expires after holdMs when the solver never answers", async () => {
+    const pending = env.market.awaitRfqResponse("rid-late", "sell", "5", 8000);
+    await vi.advanceTimersByTimeAsync(8000);
+    expect((await pending).status).toBe("expired");
   });
 
-  it("treats solver online within heartbeat window (survives 20s poll interval)", async () => {
+  it("returns busy once the waiter cap is reached", async () => {
+    // Fill the cap with un-resolved waiters (RFQ_MAX_WAITERS = 200).
+    for (let i = 0; i < 200; i++) void env.market.awaitRfqResponse(`rid-${i}`, "buy", "1", 8000);
+    const q = await env.market.awaitRfqResponse("rid-over", "buy", "1", 8000);
+    expect(q.status).toBe("busy");
+  });
+
+  it("treats solver online within the heartbeat window", async () => {
     await touchHeartbeat(env, "SOLVER");
     vi.advanceTimersByTime(20_000);
     expect(await isSolverOnline(env)).toBe(true);
   });
 
-  it("treats solver offline once heartbeat is stale", async () => {
+  it("treats solver offline once the heartbeat is stale", async () => {
     await touchHeartbeat(env, "SOLVER");
     vi.advanceTimersByTime(91_000);
     expect(await isSolverOnline(env)).toBe(false);
-  });
-
-  it("rejects invalid amount", async () => {
-    await touchHeartbeat(env, "SOLVER");
-    await expect(createRfq(env, { side: "buy", amountIn: "-1" })).rejects.toThrow(/amountIn/);
-  });
-
-  it("refuses to answer an already-answered RFQ", async () => {
-    await touchHeartbeat(env, "SOLVER");
-    const created = await createRfq(env, { side: "buy", amountIn: "10" });
-    await respondRfq(env, created.rfqId, "SOLVER", { status: "rejected", reason: "max 5" });
-    await expect(
-      respondRfq(env, created.rfqId, "SOLVER", { status: "ready", amountOut: "1" })
-    ).rejects.toThrow(/already answered/);
-  });
-
-  it("expires an unanswered RFQ after its TTL", async () => {
-    await touchHeartbeat(env, "SOLVER");
-    const created = await createRfq(env, { side: "buy", amountIn: "10" });
-    vi.advanceTimersByTime(46_000);
-    const fetched = await getRfq(env, created.rfqId);
-    expect(fetched?.status).toBe("expired");
-    await touchHeartbeat(env, "SOLVER");
-    expect(await listPendingRfqs(env)).toHaveLength(0);
   });
 });

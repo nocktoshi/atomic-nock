@@ -4,7 +4,8 @@
  */
 import { claimSwap, advanceSwap, type Env } from "./swaps.js";
 import { fillBid } from "./bids.js";
-import { respondRfq, touchHeartbeat } from "./solver-rfq.js";
+import { touchHeartbeat } from "./solver-rfq.js";
+import { withMarket } from "./market-client.js";
 import { putSwapSecret } from "./solver-store.js";
 import { allowedSolver } from "./solver-auth.js";
 import { SwapError } from "./errors.js";
@@ -66,13 +67,17 @@ export async function processSolverOutbound(
 
   switch (cmd.type) {
     case "rfq.response": {
-      await respondRfq(env, cmd.rfqId, cmd.solverPkh, {
-        status: cmd.status,
-        amountOut: cmd.amountOut,
-        pricePerNock: cmd.pricePerNock,
-        maxAmountIn: cmd.maxAmountIn,
-        reason: cmd.reason,
-      });
+      // Wake the held POST /solver/rfq (in-memory waiter on the Market DO). No
+      // DO record is written — the request returns the quote directly.
+      await withMarket(env, (stub) =>
+        stub.resolveRfqResponse(cmd.rfqId, {
+          status: cmd.status,
+          amountOut: cmd.amountOut,
+          pricePerNock: cmd.pricePerNock,
+          maxAmountIn: cmd.maxAmountIn,
+          reason: cmd.reason,
+        })
+      );
       return;
     }
     case "swap.claim": {

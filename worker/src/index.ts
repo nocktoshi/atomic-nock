@@ -40,8 +40,8 @@
  *   GET  /solver/state/pnl/summary      -> P&L totals
  *   GET  /solver/status                 -> { online } (heartbeat, not stale quote)
  *   POST /solver/heartbeat              -> solver liveness (solver session)
- *   POST /solver/rfq                    -> create sized quote request
- *   GET  /solver/rfq/:id                -> poll RFQ result
+ *   POST /solver/rfq                    -> sized quote (held open until the
+ *                                          solver answers over the queue)
  *   (solver coordination is queue-based — see solver-queue.ts)
  */
 import {
@@ -58,11 +58,8 @@ import { createBid, cancelBid, fillBid, lookupBid } from "./bids.js";
 import { getMarketFeed } from "./feed.js";
 import { oneClickQuote, oneClickGet, oneClickPost } from "./oneclick.js";
 import {
-  createRfq,
-  getRfq,
+  awaitRfq,
   isSolverOnline,
-  listPendingRfqs,
-  respondRfq,
   touchHeartbeat,
 } from "./solver-rfq.js";
 import {
@@ -72,7 +69,7 @@ import {
   isExternalBid,
   isSolverParticipant,
 } from "./solver-queue.js";
-import { rfqCreated, marketAskCreated, marketBidCreated, swapUpdated } from "./solver-events.js";
+import { marketAskCreated, marketBidCreated, swapUpdated } from "./solver-events.js";
 import type { SolverOutboundEvent } from "./solver-events.js";
 import { allowedSolver } from "./solver-auth.js";
 import {
@@ -481,49 +478,12 @@ export default {
         return json({ online: await isSolverOnline(env) });
       }
       if (path === "/solver/rfq" && req.method === "POST") {
-        await enforceRate(env.RL_READ, clientIp(req));
+        await enforceRate(env.RL_RFQ, clientIp(req));
         const body = (await req.json()) as { side?: unknown; amountIn?: unknown };
-        const rfq = await createRfq(env, body);
-        if (rfq.status === "pending" && rfq.rfqId && rfq.side && rfq.amountIn) {
-          ctx.waitUntil(
-            emitSolverEvent(
-              env,
-              rfqCreated(rfq.rfqId, rfq.side, rfq.amountIn)
-            )
-          );
-        }
-        return json(rfq);
-      }
-      if (path === "/solver/rfq/pending" && req.method === "GET") {
-        await requireSolverSession(req, env);
-        await enforceReadRate(req, env);
-        const rfqs = await listPendingRfqs(env);
-        return json({ rfqs });
-      }
-      const rfqRespondMatch = path.match(/^\/solver\/rfq\/([^/]+)\/respond$/);
-      if (rfqRespondMatch && req.method === "POST") {
-        const pkh = await requireSolverSession(req, env);
-        await enforceRate(env.RL_WRITE, pkh);
-        const id = decodeURIComponent(rfqRespondMatch[1]);
-        const body = (await req.json()) as {
-          status?: "ready" | "rejected";
-          amountOut?: string;
-          pricePerNock?: number;
-          maxAmountIn?: string;
-          reason?: string;
-        };
-        if (body.status !== "ready" && body.status !== "rejected") {
-          throw new SwapError(400, "status must be ready or rejected");
-        }
-        return json(await respondRfq(env, id, pkh, { ...body, status: body.status }));
-      }
-      const rfqGetMatch = path.match(/^\/solver\/rfq\/([^/]+)$/);
-      if (rfqGetMatch && req.method === "GET") {
-        await enforceRate(env.RL_READ, clientIp(req));
-        const id = decodeURIComponent(rfqGetMatch[1]);
-        const rfq = await getRfq(env, id);
-        if (!rfq) return json({ error: "not found" }, 404);
-        return json(rfq);
+        // Held open until the solver answers over the queue (or RFQ_HOLD_MS),
+        // so the response IS the quote — no DO record, no client polling.
+        const holdMs = Number(env.RFQ_HOLD_MS) || 8000;
+        return json(await awaitRfq(env, body, holdMs));
       }
       if (path === "/solver/heartbeat" && req.method === "POST") {
         const pkh = await requireSolverSession(req, env);
