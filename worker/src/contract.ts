@@ -50,6 +50,9 @@ export const BUYER_FIELDS = [
   "usdcRefundTxHash",
 ] as const;
 
+/** Either participant may write (solver publishes progress for wallet UIs). */
+export const STATUS_FIELDS = ["solverStatus"] as const;
+
 /** A stored swap record (string-encoded bigints, same shape the client uses). */
 export type SwapRecord = Record<string, unknown> & {
   hEvm: string;

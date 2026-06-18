@@ -23,6 +23,7 @@ import {
   BUYER_CLAIM_FIELDS,
   SELLER_FIELDS,
   BUYER_FIELDS,
+  STATUS_FIELDS,
   type SwapRecord,
 } from "./contract.js";
 import { SwapError } from "./errors.js";
@@ -339,7 +340,9 @@ export class MarketCore {
       if (IMMUTABLE_FIELDS.includes(f as never) || BUYER_CLAIM_FIELDS.includes(f as never)) {
         throw new SwapError(409, `field "${f}" is immutable once set`);
       }
-      if (SELLER_FIELDS.includes(f as never)) {
+      if (STATUS_FIELDS.includes(f as never)) {
+        /* solver or counterparty — either session pkh matches seller or buyer */
+      } else if (SELLER_FIELDS.includes(f as never)) {
         if (!isSeller) throw new SwapError(403, `only the seller may write "${f}"`);
       } else if (BUYER_FIELDS.includes(f as never)) {
         if (!isBuyer) throw new SwapError(403, `only the buyer may write "${f}"`);

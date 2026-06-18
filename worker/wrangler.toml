@@ -10,7 +10,7 @@ EMAIL_FROM = "notifications@atomicnock.com"
 TELEGRAM_BOT_NAME = "atomicnockbot"
 SOLVER_PKHS= "BUZWD8BdPehSUK7Er471SVLYsgbtAy9HwmpcfAckKxUL3RYHaf6RyGd"
 # Max ms a POST /solver/rfq is held open awaiting the solver's quote.
-RFQ_HOLD_MS = "8000"
+RFQ_HOLD_MS = "10000"
 
 # NEAR Intents 1Click: app-fee revenue (a NEAR account + bps, 100 = 1%). The JWT
 # itself is a SECRET — set it with:  npx wrangler secret put ONECLICK_JWT

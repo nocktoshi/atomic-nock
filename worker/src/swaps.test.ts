@@ -77,6 +77,18 @@ describe("advanceSwap ordering invariants", () => {
       advanceSwap(env, "0xabc", { usdcLockTxHash: "0xul" }, "STRANGER_PKH")
     ).rejects.toThrow(/not a participant/);
   });
+
+  it("either participant may write solverStatus", async () => {
+    const env = await seedClaimed();
+    const buyerMsg = await advanceSwap(env, "0xabc", {
+      solverStatus: "Waiting Block Confirm 0/2",
+    }, BUYER);
+    expect(buyerMsg.solverStatus).toBe("Waiting Block Confirm 0/2");
+    const sellerMsg = await advanceSwap(env, "0xabc", {
+      solverStatus: "Waiting Block Confirm 1/2",
+    }, SELLER);
+    expect(sellerMsg.solverStatus).toBe("Waiting Block Confirm 1/2");
+  });
 });
 
 describe("multi-asset token field", () => {
