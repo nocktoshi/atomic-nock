@@ -1,4 +1,4 @@
-name = "nock-otc-kv"
+name = "atomicnock-worker"
 main = "src/index.ts"
 compatibility_date = "2024-11-01"
 # node:crypto fallback in @block65/webcrypto-web-push (browser push encryption).
@@ -49,8 +49,6 @@ name = "RL_SOLVER"
 namespace_id = "1004"
 simple = { limit = 600, period = 60 }
 
-# Sized quote requests (POST /solver/rfq) — tighter than RL_READ so nobody can
-# hammer the solver for live rates. Per-IP; a debounced UI stays well under it.
 [[ratelimits]]
 name = "RL_RFQ"
 namespace_id = "1005"
@@ -72,5 +70,12 @@ dead_letter_queue = "solver-out-dlq"
 [[durable_objects.bindings]]
 name = "MARKET_DO"
 class_name = "Market"
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["RfqBoard"]
+[[migrations]]
+tag = "v2"
+deleted_classes = ["RfqBoard"]
+new_sqlite_classes = ["Market"]
 
 

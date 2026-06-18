@@ -61,24 +61,11 @@ max_retries = 5
 [[durable_objects.bindings]]
 name = "MARKET_DO"
 class_name = "Market"
-
 [[migrations]]
 tag = "v1"
 new_sqlite_classes = ["RfqBoard"]
-
-# v2: Market (SQLite-backed) replaces both the RfqBoard DO and KV as the system
-# of record for swaps/bids/RFQs/solver state. RfqBoard data was ephemeral
-# (<=55s RFQs + heartbeat), so deleting the class loses nothing durable.
 [[migrations]]
 tag = "v2"
-new_sqlite_classes = ["Market"]
 deleted_classes = ["RfqBoard"]
+new_sqlite_classes = ["Market"]
 
-# Bundle the rose-wasm verifier (server-side signature verification). No size
-# limit in local dev.
-[[rules]]
-type = "CompiledWasm"
-globs = ["**/*.wasm"]
-fallthrough = true
-
-# SESSION_SECRET is read from worker/.dev.vars in dev (see that file).
