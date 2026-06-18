@@ -1,0 +1,20 @@
+[package]
+name = "swap-worker"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+# workers-rs Cloudflare Worker. Phase A: minimal fetch handler that reads the
+# SWAPS KV binding, proving the workers-rs toolchain + KV wiring. The swap API
+# (routes, sessions, signature verification, state machine) lands in Phase C.
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+swap-core = { path = "../swap-core" }
+worker = "0.8"
+serde = { workspace = true }
+serde_json = { workspace = true }
+urlencoding = "2"
+getrandom = { version = "0.2", features = ["js"] }

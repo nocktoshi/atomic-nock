@@ -1,0 +1,25 @@
+[package]
+name = "swap-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+# Target-agnostic domain logic shared by the Leptos app and the Worker.
+# Builds for both native (cargo test) and wasm32. No wasm-bindgen / JS interop here.
+
+[dependencies]
+iris-crypto = { workspace = true }
+iris-nockchain-types = { workspace = true }
+iris-ztd = { workspace = true }
+serde = { workspace = true }
+# preserve_order keeps object key order = JS insertion order, so the state
+# machine's field iteration (and any first-error reporting) matches the TS worker.
+serde_json = { version = "1", features = ["preserve_order"] }
+# session auth (HMAC-SHA256 challenges/tokens) — replaces the worker's crypto.subtle.
+hmac = "0.12"
+sha2 = "0.10"
+base64 = "0.22"
+subtle = "2"
+
+[dev-dependencies]
+hex = "0.4"

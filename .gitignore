@@ -17,3 +17,7 @@ contracts/broadcast/
 target/
 .claude
 debug
+
+# Rust / workers-rs build output
+/crates/*/build/
+.cargo

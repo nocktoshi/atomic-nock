@@ -1,0 +1,52 @@
+[workspace]
+resolver = "2"
+members = [
+  "crates/swap-core",
+  "crates/swap-client",
+  "crates/swap-evm",
+  "crates/swap-nock",
+  "crates/swap-web",
+  "crates/swap-worker",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+
+# --- iris-rs (Nockchain crypto / types / tx / gRPC), pinned by commit ---
+# We pin the `nocktoshi/rose-rs` fork at the `fix/hax-hash` tip, NOT upstream
+# `nockbox/iris-rs`. The fork is exactly upstream c28b774 + 2 commits, the key
+# one being a32054b "fix: incorrect txn id hash on hax spends": the Nockchain
+# node's hax (hash-lock) check uses a STRUCTURAL hash-noun (hash-varlen per atom
+# leaf, hash-ten-cell per cell) while upstream iris hashes the whole noun. The
+# two diverge for structured HTLC preimages, so without this fix every HTLC claim
+# fails with `v1-spend-1-lock-failed`. This fork is the source of the npm
+# `@nockchain/rose-wasm` the current app relies on for tx-id calc. (rose-rs is
+# public, so HTTPS works; git-fetch-with-cli is still set for the SSH case.)
+[workspace.dependencies.iris-crypto]
+git = "https://github.com/nocktoshi/rose-rs.git"
+rev = "f3a46016794200580e64412ed7ef2045e48337fc"
+
+[workspace.dependencies.iris-nockchain-types]
+git = "https://github.com/nocktoshi/rose-rs.git"
+rev = "f3a46016794200580e64412ed7ef2045e48337fc"
+
+[workspace.dependencies.iris-grpc-proto]
+git = "https://github.com/nocktoshi/rose-rs.git"
+rev = "f3a46016794200580e64412ed7ef2045e48337fc"
+
+[workspace.dependencies.iris-ztd]
+git = "https://github.com/nocktoshi/rose-rs.git"
+rev = "f3a46016794200580e64412ed7ef2045e48337fc"
+
+# --- shared third-party ---
+[workspace.dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[profile.release]
+opt-level = "z"
+lto = true
+codegen-units = 1
+panic = "abort"

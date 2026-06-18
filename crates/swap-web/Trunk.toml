@@ -1,0 +1,18 @@
+[build]
+target = "index.html"
+
+[serve]
+port = 5173
+
+# Dev gRPC-Web proxy to the Nockchain RPC, replacing the old Vite proxy.
+# The current TS app talks to these two path prefixes same-origin in dev.
+# NOTE (Phase A risk 7): Trunk cannot rewrite outgoing origin/referer headers
+# the way the Vite `configure` hook did. To be validated against the upstream;
+# if the spoof turns out to be required, front a tiny local reverse proxy here.
+[[proxy]]
+rewrite = "/nockchain.public.v2.NockchainService/"
+backend = "https://rpc.nockchain.net/nockchain.public.v2.NockchainService/"
+
+[[proxy]]
+rewrite = "/nockchain.private.v1/"
+backend = "https://rpc.nockchain.net/nockchain.private.v1/"

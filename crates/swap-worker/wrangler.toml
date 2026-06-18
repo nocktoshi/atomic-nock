@@ -1,0 +1,19 @@
+# Rust (workers-rs) worker. Unlike the old TS worker, iris-rs is compiled into
+# the worker's own wasm, so there is no separate `[[rules]] CompiledWasm` module.
+#
+# Local dev (KV simulated on disk under .wrangler/state, never touches prod):
+#   cd crates/swap-worker && wrangler dev
+#
+# Build is delegated to worker-build (install: `cargo install worker-build`).
+name = "atomicnock-dev"
+main = "build/worker/shim.mjs"
+compatibility_date = "2024-11-01"
+
+[build]
+command = "worker-build --release"
+
+[[kv_namespaces]]
+binding = "SWAPS"
+id = "0000000000000000000000000000dead"
+
+# SESSION_SECRET is read from .dev.vars in dev (Phase C).
